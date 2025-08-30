@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "dockerfilePath": "./Dockerfile",
+  "buildArguments": {
+    "NODE_ENV": "production"
+  },
+  "healthCheckPath": "/api/health",
+  "healthCheckInterval": 30000,
+  "healthCheckTimeout": 5000,
+  "healthCheckRetries": 3,
+  "exposeAsWebApp": true,
+  "httpPort": 5000,
+  "containerHttpPort": 5000,
+  "notExposeAsWebApp": false,
+  "websocketSupport": false,
+  "volumes": [],
+  "ports": [],
+  "environmentVariables": [
+    {
+      "key": "NODE_ENV",
+      "value": "production"
+    }
+  ]
+}
