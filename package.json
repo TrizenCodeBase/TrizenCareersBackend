@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
+    "start:simple": "node src/server-simple.js",
     "dev": "nodemon src/server.js",
     "test": "jest",
     "lint": "eslint src/"
