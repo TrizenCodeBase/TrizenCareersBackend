@@ -16,14 +16,22 @@ dotenv.config();
 const app = express();
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
+const connectDB = async () => {
+  try {
+    if (!process.env.MONGODB_URI) {
+      logger.error('MONGODB_URI environment variable is not set');
+      return;
+    }
+    
+    await mongoose.connect(process.env.MONGODB_URI);
     logger.info('Connected to MongoDB');
-  })
-  .catch((error) => {
+  } catch (error) {
     logger.error('MongoDB connection error:', error);
-    process.exit(1);
-  });
+    // Don't exit process, let the app run without DB for health checks
+  }
+};
+
+connectDB();
 
 // Security middleware
 app.use(helmet({
@@ -96,7 +104,18 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Server is running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
+// Simple root endpoint for testing
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Trizen Careers Backend API',
+    version: '1.0.0',
+    status: 'running'
   });
 });
 
