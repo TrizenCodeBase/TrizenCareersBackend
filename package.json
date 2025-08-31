@@ -9,7 +9,8 @@
     "start:simple": "node src/server-simple.js",
     "dev": "nodemon src/server.js",
     "test": "jest",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "test:deployment": "node test-deployment.js"
   },
   "keywords": [
     "careers",

@@ -2,7 +2,16 @@
   "schemaVersion": 2,
   "dockerfilePath": "./Dockerfile",
   "buildArguments": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "PORT": "5000",
+    "MONGODB_URI": "{{MONGODB_URI}}",
+    "JWT_SECRET": "{{JWT_SECRET}}",
+    "JWT_EXPIRES_IN": "{{JWT_EXPIRES_IN}}",
+    "ALLOWED_ORIGINS": "{{ALLOWED_ORIGINS}}",
+    "FRONTEND_URL": "{{FRONTEND_URL}}",
+    "API_PREFIX": "{{API_PREFIX}}",
+    "API_VERSION": "{{API_VERSION}}",
+    "CAPROVER_GIT_COMMIT_SHA": "{{CAPROVER_GIT_COMMIT_SHA}}"
   },
   "healthCheckPath": "/api/health",
   "healthCheckInterval": 30000,
@@ -19,6 +28,42 @@
     {
       "key": "NODE_ENV",
       "value": "production"
+    },
+    {
+      "key": "PORT",
+      "value": "5000"
+    },
+    {
+      "key": "MONGODB_URI",
+      "value": "{{MONGODB_URI}}"
+    },
+    {
+      "key": "JWT_SECRET",
+      "value": "{{JWT_SECRET}}"
+    },
+    {
+      "key": "JWT_EXPIRES_IN",
+      "value": "{{JWT_EXPIRES_IN}}"
+    },
+    {
+      "key": "ALLOWED_ORIGINS",
+      "value": "{{ALLOWED_ORIGINS}}"
+    },
+    {
+      "key": "FRONTEND_URL",
+      "value": "{{FRONTEND_URL}}"
+    },
+    {
+      "key": "API_PREFIX",
+      "value": "{{API_PREFIX}}"
+    },
+    {
+      "key": "API_VERSION",
+      "value": "{{API_VERSION}}"
+    },
+    {
+      "key": "CAPROVER_GIT_COMMIT_SHA",
+      "value": "{{CAPROVER_GIT_COMMIT_SHA}}"
     }
   ]
 }
