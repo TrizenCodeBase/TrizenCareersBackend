@@ -10,7 +10,8 @@
     "dev": "nodemon src/server.js",
     "test": "jest",
     "lint": "eslint src/",
-    "test:deployment": "node test-deployment.js"
+    "test:deployment": "node test-deployment.js",
+    "test:cors": "node test-cors.js"
   },
   "keywords": [
     "careers",
