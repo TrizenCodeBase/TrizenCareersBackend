@@ -40,10 +40,10 @@ const validateSignup = [
 ];
 
 const validateLogin = [
-  body('username')
-    .trim()
-    .notEmpty()
-    .withMessage('Username is required'),
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email address'),
   body('password')
     .notEmpty()
     .withMessage('Password is required')
@@ -138,10 +138,10 @@ router.post('/login', validateLogin, async (req, res) => {
       });
     }
 
-    const { username, password } = req.body;
+    const { email, password } = req.body;
 
     // Find user and include password for comparison
-    const user = await User.findOne({ username }).select('+password');
+    const user = await User.findOne({ email }).select('+password');
 
     if (!user) {
       return res.status(401).json({
@@ -174,7 +174,7 @@ router.post('/login', validateLogin, async (req, res) => {
     // Generate token
     const token = generateToken(user._id);
 
-    logger.info(`User logged in: ${username}`);
+    logger.info(`User logged in: ${email}`);
 
     res.json({
       success: true,
