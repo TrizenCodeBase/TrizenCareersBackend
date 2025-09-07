@@ -3,6 +3,7 @@ import { body, validationResult } from 'express-validator';
 import Application from '../models/Application.js';
 import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
+import fetch from 'node-fetch';
 
 const router = express.Router();
 
@@ -426,6 +427,111 @@ router.get('/stats/overview', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Server error'
+    });
+  }
+});
+
+// Email Service Configuration
+const EMAIL_SERVICE_CONFIG = {
+  baseUrl: 'https://trizensupportemailservice.llp.trizenventures.com',
+  apiKey: 'trizen-support-email-2024-secure-key-xyz789'
+};
+
+// POST /api/v1/applications/send-confirmation-email - Send job application confirmation email
+router.post('/send-confirmation-email', protect, async (req, res) => {
+  try {
+    const { applicantName, applicantEmail, jobTitle, jobId, companyName } = req.body;
+
+    // Validate required fields
+    if (!applicantName || !applicantEmail || !jobTitle || !jobId || !companyName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: applicantName, applicantEmail, jobTitle, jobId, companyName'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(applicantEmail)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid email format'
+      });
+    }
+
+    const subject = `Application Confirmation - ${jobTitle} at ${companyName}`;
+    
+    const message = `
+Dear ${applicantName},
+
+Thank you for your interest in joining our team at ${companyName}!
+
+We have successfully received your application for the position of "${jobTitle}" (Job ID: ${jobId}).
+
+What happens next:
+• Our HR team will review your application within 2-3 business days
+• If your profile matches our requirements, we'll contact you for the next steps
+• You may be invited for an interview or assessment
+• We'll keep you updated throughout the process
+
+Application Details:
+• Position: ${jobTitle}
+• Application ID: ${jobId}
+• Applied on: ${new Date().toLocaleDateString()}
+• Status: Under Review
+
+If you have any questions about your application or the recruitment process, please don't hesitate to contact us at support@trizenventures.com.
+
+We appreciate your interest in ${companyName} and look forward to potentially welcoming you to our team!
+
+Best regards,
+Trizen Ventures HR Team
+
+---
+This is an automated confirmation email. Please do not reply to this email.
+For support, contact us at support@trizenventures.com
+    `.trim();
+
+    // Send email via email service
+    const emailResponse = await fetch(`${EMAIL_SERVICE_CONFIG.baseUrl}/api/support/send-custom`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': EMAIL_SERVICE_CONFIG.apiKey,
+      },
+      body: JSON.stringify({
+        clientEmail: applicantEmail,
+        clientName: applicantName,
+        subject,
+        message,
+        isHtml: false
+      })
+    });
+
+    const emailResult = await emailResponse.json();
+
+    if (!emailResponse.ok) {
+      logger.error('Email service error:', emailResult);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to send confirmation email',
+        details: emailResult.message || 'Email service error'
+      });
+    }
+
+    logger.info(`Confirmation email sent successfully to ${applicantEmail} for job ${jobId}`);
+
+    res.json({
+      success: true,
+      message: 'Confirmation email sent successfully',
+      data: emailResult.data
+    });
+
+  } catch (error) {
+    logger.error('Error sending confirmation email:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error while sending email'
     });
   }
 });
