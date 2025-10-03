@@ -314,7 +314,7 @@ router.put('/profile', protect, [
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
 
-    if (email && email !== user.email) {
+    if (email && (!user.isEmailVerified || email !== user.email)) {
       // Ensure no other user has this email
       const emailTaken = await User.findOne({ email });
       if (emailTaken) {
