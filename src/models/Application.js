@@ -39,6 +39,11 @@ const applicationSchema = new mongoose.Schema({
     required: [true, 'LinkedIn Profile URL is required'],
     trim: true
   },
+  resumeLink: {
+    type: String,
+    required: [true, 'Resume link is required'],
+    trim: true
+  },
   educationStatus: {
     type: String,
     required: [true, 'Current education status is required'],

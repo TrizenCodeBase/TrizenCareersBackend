@@ -16,6 +16,7 @@ const validateApplication = [
   body('location').notEmpty().withMessage('Location is required'),
   body('portfolioUrl').notEmpty().withMessage('Portfolio/GitHub/Website URL is required').isURL().withMessage('Please enter a valid URL'),
   body('linkedinProfile').notEmpty().withMessage('LinkedIn Profile URL is required').isURL().withMessage('Please enter a valid LinkedIn URL'),
+  body('resumeLink').notEmpty().withMessage('Resume link is required').isURL().withMessage('Please enter a valid resume link'),
   body('educationStatus').notEmpty().withMessage('Current education status is required'),
   body('degreeDiscipline').notEmpty().withMessage('Degree/Discipline is required'),
   body('researchPapers').notEmpty().withMessage('Research papers information is required'),
