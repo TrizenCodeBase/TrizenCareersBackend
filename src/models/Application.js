@@ -31,7 +31,6 @@ const applicationSchema = new mongoose.Schema({
   },
   portfolioUrl: {
     type: String,
-    required: [true, 'Portfolio/GitHub/Website URL is required'],
     trim: true
   },
   linkedinProfile: {
@@ -41,22 +40,18 @@ const applicationSchema = new mongoose.Schema({
   },
   resumeLink: {
     type: String,
-    required: [true, 'Resume link is required'],
     trim: true
   },
   educationStatus: {
     type: String,
-    required: [true, 'Current education status is required'],
     trim: true
   },
   degreeDiscipline: {
     type: String,
-    required: [true, 'Degree/Discipline is required'],
     trim: true
   },
   researchPapers: {
     type: String,
-    required: [true, 'Research papers information is required'],
     trim: true
   },
   internshipExperience: {
@@ -66,17 +61,56 @@ const applicationSchema = new mongoose.Schema({
   },
   duration: {
     type: String,
-    required: [true, 'Duration in months is required'],
     trim: true
   },
   aiMlProjects: {
     type: String,
-    required: [true, 'AI/ML projects information is required'],
     trim: true
   },
   motivation: {
     type: String,
     required: [true, 'Motivation to join is required'],
+    trim: true
+  },
+  // Social Media Management Intern specific fields
+  currentQualification: {
+    type: String,
+    trim: true
+  },
+  collegeUniversity: {
+    type: String,
+    trim: true
+  },
+  relevantCourses: {
+    type: String,
+    trim: true
+  },
+  socialMediaPlatforms: [{
+    type: String,
+    trim: true
+  }],
+  contentCreationSkills: [{
+    type: String,
+    trim: true
+  }],
+  portfolioWorkSamples: {
+    type: String,
+    trim: true
+  },
+  preferredStartDate: {
+    type: Date
+  },
+  hoursPerWeek: {
+    type: String,
+    trim: true
+  },
+  workPreference: {
+    type: String,
+    enum: ['Hybrid', 'Remote', 'Office'],
+    trim: true
+  },
+  expectations: {
+    type: String,
     trim: true
   },
   status: {

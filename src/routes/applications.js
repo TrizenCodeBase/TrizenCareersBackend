@@ -7,27 +7,59 @@ import fetch from 'node-fetch';
 
 const router = express.Router();
 
-// Validation middleware
+// Base validation middleware
 const validateApplication = [
   body('jobId').notEmpty().withMessage('Job ID is required'),
   body('fullName').notEmpty().withMessage('Full name is required').isLength({ max: 100 }).withMessage('Full name cannot exceed 100 characters'),
   body('email').isEmail().withMessage('Please enter a valid email'),
   body('phone').notEmpty().withMessage('Phone number is required'),
   body('location').notEmpty().withMessage('Location is required'),
-  body('portfolioUrl').notEmpty().withMessage('Portfolio/GitHub/Website URL is required').isURL().withMessage('Please enter a valid URL'),
   body('linkedinProfile').notEmpty().withMessage('LinkedIn Profile URL is required').isURL().withMessage('Please enter a valid LinkedIn URL'),
-  body('resumeLink').notEmpty().withMessage('Resume link is required').isURL().withMessage('Please enter a valid resume link'),
-  body('educationStatus').notEmpty().withMessage('Current education status is required'),
-  body('degreeDiscipline').notEmpty().withMessage('Degree/Discipline is required'),
-  body('researchPapers').notEmpty().withMessage('Research papers information is required'),
-  body('internshipExperience').notEmpty().withMessage('Internship experience information is required'),
-  body('duration').notEmpty().withMessage('Duration in months is required'),
-  body('aiMlProjects').notEmpty().withMessage('AI/ML projects information is required'),
   body('motivation').notEmpty().withMessage('Motivation to join is required')
 ];
 
+// Conditional validation middleware
+const validateApplicationConditional = (req, res, next) => {
+  const { jobId } = req.body;
+  
+  // Social Media Management Intern specific validation
+  if (jobId === 'TV-MKT-SMM-2025-003') {
+    const socialMediaValidation = [
+      body('currentQualification').notEmpty().withMessage('Current qualification is required'),
+      body('collegeUniversity').notEmpty().withMessage('College/University name is required'),
+      body('socialMediaPlatforms').isArray({ min: 1 }).withMessage('At least one social media platform must be selected'),
+      body('contentCreationSkills').isArray({ min: 1 }).withMessage('At least one content creation skill must be selected'),
+      body('portfolioWorkSamples').notEmpty().withMessage('Portfolio or work samples link is required').isURL().withMessage('Please enter a valid portfolio link'),
+      body('resumeLink').notEmpty().withMessage('Resume link is required').isURL().withMessage('Please enter a valid resume link'),
+      body('preferredStartDate').notEmpty().withMessage('Preferred start date is required'),
+      body('workPreference').notEmpty().withMessage('Work preference is required').isIn(['Hybrid', 'Remote', 'Office']).withMessage('Invalid work preference'),
+      body('internshipExperience').notEmpty().withMessage('Prior internships or work experience is required')
+    ];
+    
+    // Apply social media validation
+    socialMediaValidation.forEach(validator => validator(req, res, () => {}));
+  } else {
+    // Original validation for other jobs
+    const originalValidation = [
+      body('portfolioUrl').notEmpty().withMessage('Portfolio/GitHub/Website URL is required').isURL().withMessage('Please enter a valid URL'),
+      body('resumeLink').notEmpty().withMessage('Resume link is required').isURL().withMessage('Please enter a valid resume link'),
+      body('educationStatus').notEmpty().withMessage('Current education status is required'),
+      body('degreeDiscipline').notEmpty().withMessage('Degree/Discipline is required'),
+      body('researchPapers').notEmpty().withMessage('Research papers information is required'),
+      body('internshipExperience').notEmpty().withMessage('Internship experience information is required'),
+      body('duration').notEmpty().withMessage('Duration in months is required'),
+      body('aiMlProjects').notEmpty().withMessage('AI/ML projects information is required')
+    ];
+    
+    // Apply original validation
+    originalValidation.forEach(validator => validator(req, res, () => {}));
+  }
+  
+  next();
+};
+
 // POST /api/v1/applications - Submit a new application
-router.post('/', protect, validateApplication, async (req, res) => {
+router.post('/', protect, validateApplication, validateApplicationConditional, async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
