@@ -97,9 +97,6 @@ const applicationSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  preferredStartDate: {
-    type: Date
-  },
   hoursPerWeek: {
     type: String,
     trim: true
@@ -107,6 +104,10 @@ const applicationSchema = new mongoose.Schema({
   workPreference: {
     type: String,
     enum: ['Hybrid', 'Remote', 'Office'],
+    trim: true
+  },
+  preferredStartDate: {
+    type: String,
     trim: true
   },
   expectations: {
