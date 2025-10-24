@@ -24,35 +24,85 @@ const validateApplicationConditional = (req, res, next) => {
   
   // Social Media Management Intern specific validation
   if (jobId === 'TV-MKT-SMM-2025-003') {
-    const socialMediaValidation = [
-      body('currentQualification').notEmpty().withMessage('Current qualification is required'),
-      body('collegeUniversity').notEmpty().withMessage('College/University name is required'),
-      body('socialMediaPlatforms').isArray({ min: 1 }).withMessage('At least one social media platform must be selected'),
-      body('contentCreationSkills').isArray({ min: 1 }).withMessage('At least one content creation skill must be selected'),
-      body('portfolioWorkSamples').notEmpty().withMessage('Portfolio or work samples link is required').isURL().withMessage('Please enter a valid portfolio link'),
-      body('resumeLink').notEmpty().withMessage('Resume link is required').isURL().withMessage('Please enter a valid resume link'),
-      body('preferredStartDate').notEmpty().withMessage('Preferred start date is required'),
-      body('workPreference').notEmpty().withMessage('Work preference is required').isIn(['Hybrid', 'Remote', 'Office']).withMessage('Invalid work preference'),
-      body('internshipExperience').notEmpty().withMessage('Prior internships or work experience is required')
+    // Check required fields for Social Media Management Intern
+    const requiredFields = [
+      'currentQualification', 'collegeUniversity', 'socialMediaPlatforms', 
+      'contentCreationSkills', 'portfolioWorkSamples', 'resumeLink', 
+      'preferredStartDate', 'workPreference', 'internshipExperience'
     ];
     
-    // Apply social media validation
-    socialMediaValidation.forEach(validator => validator(req, res, () => {}));
+    const missingFields = requiredFields.filter(field => {
+      if (field === 'socialMediaPlatforms' || field === 'contentCreationSkills') {
+        return !req.body[field] || !Array.isArray(req.body[field]) || req.body[field].length === 0;
+      }
+      return !req.body[field] || req.body[field].trim() === '';
+    });
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: missingFields.map(field => ({
+          field,
+          message: `${field} is required`
+        }))
+      });
+    }
+    
+    // Validate work preference
+    if (!['Hybrid', 'Remote', 'Office'].includes(req.body.workPreference)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid work preference. Must be Hybrid, Remote, or Office'
+      });
+    }
+    
+    // Validate URLs
+    const urlFields = ['portfolioWorkSamples', 'resumeLink'];
+    for (const field of urlFields) {
+      try {
+        new URL(req.body[field]);
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid URL format for ${field}`
+        });
+      }
+    }
   } else {
-    // Original validation for other jobs
-    const originalValidation = [
-      body('portfolioUrl').notEmpty().withMessage('Portfolio/GitHub/Website URL is required').isURL().withMessage('Please enter a valid URL'),
-      body('resumeLink').notEmpty().withMessage('Resume link is required').isURL().withMessage('Please enter a valid resume link'),
-      body('educationStatus').notEmpty().withMessage('Current education status is required'),
-      body('degreeDiscipline').notEmpty().withMessage('Degree/Discipline is required'),
-      body('researchPapers').notEmpty().withMessage('Research papers information is required'),
-      body('internshipExperience').notEmpty().withMessage('Internship experience information is required'),
-      body('duration').notEmpty().withMessage('Duration in months is required'),
-      body('aiMlProjects').notEmpty().withMessage('AI/ML projects information is required')
+    // Original validation for other jobs (AIML, MERN, etc.)
+    const requiredFields = [
+      'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
+      'researchPapers', 'internshipExperience', 'duration', 'aiMlProjects'
     ];
     
-    // Apply original validation
-    originalValidation.forEach(validator => validator(req, res, () => {}));
+    const missingFields = requiredFields.filter(field => 
+      !req.body[field] || req.body[field].trim() === ''
+    );
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: missingFields.map(field => ({
+          field,
+          message: `${field} is required`
+        }))
+      });
+    }
+    
+    // Validate URLs
+    const urlFields = ['portfolioUrl', 'resumeLink'];
+    for (const field of urlFields) {
+      try {
+        new URL(req.body[field]);
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid URL format for ${field}`
+        });
+      }
+    }
   }
   
   next();
@@ -61,8 +111,15 @@ const validateApplicationConditional = (req, res, next) => {
 // POST /api/v1/applications - Submit a new application
 router.post('/', protect, validateApplication, validateApplicationConditional, async (req, res) => {
   try {
+    // Debug logging
+    logger.info('Application submission request received:', {
+      body: req.body,
+      user: req.user ? req.user._id : 'No user'
+    });
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      logger.error('Validation errors:', errors.array());
       return res.status(400).json({
         success: false,
         error: 'Validation failed',
@@ -84,10 +141,19 @@ router.post('/', protect, validateApplication, validateApplicationConditional, a
     }
 
     // Create new application
+    logger.info('Creating application with data:', {
+      jobId: req.body.jobId,
+      fullName: req.body.fullName,
+      email: req.body.email,
+      appliedBy: req.user._id
+    });
+
     const application = await Application.create({
       ...req.body,
       appliedBy: req.user._id
     });
+
+    logger.info('Application created successfully:', application._id);
 
     // Populate user details
     await application.populate('appliedBy', 'username email firstName lastName role');
@@ -104,10 +170,16 @@ router.post('/', protect, validateApplication, validateApplicationConditional, a
       }
     });
   } catch (error) {
-    logger.error('Error submitting application:', error);
+    logger.error('Error submitting application:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      body: req.body
+    });
     res.status(500).json({
       success: false,
-      error: 'Server error'
+      error: 'Server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
