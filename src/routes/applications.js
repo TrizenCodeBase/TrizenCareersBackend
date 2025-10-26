@@ -74,7 +74,8 @@ const validateApplicationConditional = (req, res, next) => {
     // Original validation for other jobs (AIML, MERN, etc.)
     const requiredFields = [
       'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
-      'researchPapers', 'internshipExperience', 'duration', 'aiMlProjects', 'expectedStipend'
+      'researchPapers', 'internshipExperience', 'duration', 'aiMlProjects', 
+      'preferredStartDate', 'expectedStipend'
     ];
     
     const missingFields = requiredFields.filter(field => 

@@ -94,6 +94,11 @@ const aimlApplicationSchema = new mongoose.Schema({
     type: String,
     required: [true, 'AI/ML projects information is required'],
     trim: true
+  },
+  preferredStartDate: {
+    type: String,
+    required: [true, 'Preferred start date is required'],
+    trim: true
   }
 }, { timestamps: true });
 
@@ -138,6 +143,11 @@ const mernApplicationSchema = new mongoose.Schema({
   aiMlProjects: {
     type: String,
     required: [true, 'AI/ML projects information is required'],
+    trim: true
+  },
+  preferredStartDate: {
+    type: String,
+    required: [true, 'Preferred start date is required'],
     trim: true
   }
 }, { timestamps: true });
@@ -253,3 +263,4 @@ export default {
   COLLECTION_MAPPING,
   SCHEMA_MAPPING
 };
+
