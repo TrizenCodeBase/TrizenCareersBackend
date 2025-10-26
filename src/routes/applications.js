@@ -614,7 +614,9 @@ router.get('/stats/overview', protect, async (req, res) => {
 
 // Email Service Configuration
 const EMAIL_SERVICE_CONFIG = {
-  baseUrl: 'https://trizensupportemailservice.llp.trizenventures.com',
+  baseUrl: process.env.NODE_ENV === 'production' 
+    ? 'https://trizensupportemailservice.llp.trizenventures.com'
+    : 'http://localhost:3002',
   apiKey: 'trizen-support-email-2024-secure-key-xyz789'
 };
 
@@ -641,51 +643,20 @@ router.post('/send-confirmation-email', protect, async (req, res) => {
     }
 
     const subject = `Application Confirmation - ${jobTitle} at ${companyName}`;
-    
-    const message = `
-Dear ${applicantName},
 
-Thank you for your interest in joining our team at ${companyName}!
-
-We have successfully received your application for the position of "${jobTitle}" (Job ID: ${jobId}).
-
-What happens next:
-• Our HR team will review your application within 2-3 business days
-• If your profile matches our requirements, we'll contact you for the next steps
-• You may be invited for an interview or assessment
-• We'll keep you updated throughout the process
-
-Application Details:
-• Position: ${jobTitle}
-• Application ID: ${jobId}
-• Applied on: ${new Date().toLocaleDateString()}
-• Status: Under Review
-
-If you have any questions about your application or the recruitment process, please don't hesitate to contact us at support@trizenventures.com.
-
-We appreciate your interest in ${companyName} and look forward to potentially welcoming you to our team!
-
-Best regards,
-Trizen Ventures HR Team
-
----
-This is an automated confirmation email. Please do not reply to this email.
-For support, contact us at support@trizenventures.com
-    `.trim();
-
-    // Send email via email service
-    const emailResponse = await fetch(`${EMAIL_SERVICE_CONFIG.baseUrl}/api/support/send-custom`, {
+    // Send email via email service using the new application confirmation endpoint
+    const emailResponse = await fetch(`${EMAIL_SERVICE_CONFIG.baseUrl}/api/support/send-application-confirmation`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': EMAIL_SERVICE_CONFIG.apiKey,
       },
       body: JSON.stringify({
-        clientEmail: applicantEmail,
-        clientName: applicantName,
-        subject,
-        message,
-        isHtml: false
+        applicantEmail: applicantEmail,
+        applicantName: applicantName,
+        jobTitle: jobTitle,
+        jobId: jobId,
+        appliedDate: new Date().toLocaleDateString()
       })
     });
 
