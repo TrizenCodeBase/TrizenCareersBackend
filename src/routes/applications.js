@@ -1,6 +1,6 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
-import Application from '../models/Application.js';
+import { getApplicationModel, isSupportedJobId } from '../models/ApplicationFactory.js';
 import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
@@ -128,9 +128,21 @@ router.post('/', protect, validateApplication, validateApplicationConditional, a
       });
     }
 
+    const { jobId } = req.body;
+
+    // Check if jobId is supported
+    if (!isSupportedJobId(jobId)) {
+      return res.status(400).json({
+        success: false,
+        error: `Unsupported job ID: ${jobId}`
+      });
+    }
+
+    // Get the appropriate model for this job
+    const ApplicationModel = getApplicationModel(jobId);
+
     // Check if user has already applied for this job
-    const existingApplication = await Application.findOne({
-      jobId: req.body.jobId,
+    const existingApplication = await ApplicationModel.findOne({
       appliedBy: req.user._id
     });
 
@@ -149,7 +161,7 @@ router.post('/', protect, validateApplication, validateApplicationConditional, a
       appliedBy: req.user._id
     });
 
-    const application = await Application.create({
+    const application = await ApplicationModel.create({
       ...req.body,
       appliedBy: req.user._id
     });
@@ -225,26 +237,88 @@ router.get('/', async (req, res) => {
     const sortOptions = {};
     sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
-    const applications = await Application.find(query)
-      .populate('appliedBy', 'username email firstName lastName role')
-      .sort(sortOptions)
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .exec();
-
-    const total = await Application.countDocuments(query);
-
-    res.json({
-      success: true,
-      data: applications,
-      pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
-        totalApplications: total,
-        hasNextPage: page * limit < total,
-        hasPrevPage: page > 1
+    // If specific jobId is requested, get from that collection only
+    if (jobId) {
+      if (!isSupportedJobId(jobId)) {
+        return res.status(400).json({
+          success: false,
+          error: `Unsupported job ID: ${jobId}`
+        });
       }
-    });
+
+      const ApplicationModel = getApplicationModel(jobId);
+      const applications = await ApplicationModel.find(query)
+        .populate('appliedBy', 'username email firstName lastName role')
+        .sort(sortOptions)
+        .limit(limit * 1)
+        .skip((page - 1) * limit)
+        .exec();
+
+      const total = await ApplicationModel.countDocuments(query);
+
+      return res.json({
+        success: true,
+        data: applications,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+          totalApplications: total,
+          hasNextPage: page * limit < total,
+          hasPrevPage: page > 1
+        }
+      });
+    } else {
+      // Get from all collections
+      const { getAllApplicationModels } = await import('../models/ApplicationFactory.js');
+      const allModels = getAllApplicationModels();
+      
+      let allApplications = [];
+      let totalApplications = 0;
+
+      for (const { jobId: modelJobId, model } of allModels) {
+        const applications = await model.find(query)
+          .populate('appliedBy', 'username email firstName lastName role')
+          .sort(sortOptions)
+          .exec();
+
+        // Add jobId to each application for identification
+        applications.forEach(app => {
+          app.jobId = modelJobId;
+        });
+
+        allApplications = allApplications.concat(applications);
+        totalApplications += await model.countDocuments(query);
+      }
+
+      // Sort all applications
+      allApplications.sort((a, b) => {
+        const aValue = a[sortBy];
+        const bValue = b[sortBy];
+        
+        if (sortOrder === 'desc') {
+          return bValue > aValue ? 1 : -1;
+        } else {
+          return aValue > bValue ? 1 : -1;
+        }
+      });
+
+      // Apply pagination
+      const startIndex = (page - 1) * limit;
+      const endIndex = startIndex + limit;
+      const paginatedApplications = allApplications.slice(startIndex, endIndex);
+
+      return res.json({
+        success: true,
+        data: paginatedApplications,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(totalApplications / limit),
+          totalApplications,
+          hasNextPage: page * limit < totalApplications,
+          hasPrevPage: page > 1
+        }
+      });
+    }
   } catch (error) {
     logger.error('Error fetching applications:', error);
     res.status(500).json({
