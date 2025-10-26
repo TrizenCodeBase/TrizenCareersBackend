@@ -15,7 +15,8 @@ const validateApplication = [
   body('phone').notEmpty().withMessage('Phone number is required'),
   body('location').notEmpty().withMessage('Location is required'),
   body('linkedinProfile').notEmpty().withMessage('LinkedIn Profile URL is required').isURL().withMessage('Please enter a valid LinkedIn URL'),
-  body('motivation').notEmpty().withMessage('Motivation to join is required')
+  body('motivation').notEmpty().withMessage('Motivation to join is required'),
+  body('expectedStipend').notEmpty().withMessage('Expected stipend amount is required')
 ];
 
 // Conditional validation middleware
@@ -28,7 +29,7 @@ const validateApplicationConditional = (req, res, next) => {
     const requiredFields = [
       'currentQualification', 'collegeUniversity', 'socialMediaPlatforms', 
       'contentCreationSkills', 'portfolioWorkSamples', 'resumeLink', 
-      'preferredStartDate', 'workPreference', 'internshipExperience'
+      'preferredStartDate', 'workPreference', 'internshipExperience', 'expectedStipend'
     ];
     
     const missingFields = requiredFields.filter(field => {
@@ -73,7 +74,7 @@ const validateApplicationConditional = (req, res, next) => {
     // Original validation for other jobs (AIML, MERN, etc.)
     const requiredFields = [
       'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
-      'researchPapers', 'internshipExperience', 'duration', 'aiMlProjects'
+      'researchPapers', 'internshipExperience', 'duration', 'aiMlProjects', 'expectedStipend'
     ];
     
     const missingFields = requiredFields.filter(field => 

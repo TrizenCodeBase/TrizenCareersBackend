@@ -72,6 +72,11 @@ const applicationSchema = new mongoose.Schema({
     required: [true, 'Motivation to join is required'],
     trim: true
   },
+  expectedStipend: {
+    type: String,
+    required: [true, 'Expected stipend amount is required'],
+    trim: true
+  },
   // Social Media Management Intern specific fields
   currentQualification: {
     type: String,
