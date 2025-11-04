@@ -140,6 +140,56 @@ router.post('/login', validateLogin, async (req, res) => {
 
     const { email, password } = req.body;
 
+    // TEMPORARY: Hardcoded admin credentials for testing
+    const HARDCODED_ADMIN = {
+      email: 'admin@trizenventures.com',
+      password: 'Test@123'
+    };
+
+    // Check hardcoded credentials first
+    if (email.toLowerCase() === HARDCODED_ADMIN.email.toLowerCase() && password === HARDCODED_ADMIN.password) {
+      // Create or find admin user in database
+      let adminUser = await User.findOne({ email: HARDCODED_ADMIN.email });
+      
+      if (!adminUser) {
+        // Create admin user if doesn't exist
+        adminUser = await User.create({
+          username: 'admin',
+          email: HARDCODED_ADMIN.email,
+          password: HARDCODED_ADMIN.password,
+          firstName: 'Admin',
+          lastName: 'User',
+          role: 'admin',
+          isActive: true
+        });
+      } else {
+        // Ensure user is admin and active
+        if (adminUser.role !== 'admin') {
+          adminUser.role = 'admin';
+        }
+        if (!adminUser.isActive) {
+          adminUser.isActive = true;
+        }
+        adminUser.lastLogin = new Date();
+        await adminUser.save();
+      }
+
+      // Generate token
+      const token = generateToken(adminUser._id);
+
+      logger.info(`Admin logged in (hardcoded): ${email}`);
+
+      return res.json({
+        success: true,
+        message: 'Login successful',
+        data: {
+          user: adminUser.toJSON(),
+          token
+        }
+      });
+    }
+
+    // Regular database authentication for other users
     // Find user and include password for comparison
     const user = await User.findOne({ email }).select('+password');
 

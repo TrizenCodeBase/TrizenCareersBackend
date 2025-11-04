@@ -7,6 +7,15 @@ export const errorHandler = (err, req, res, next) => {
   // Log error
   logger.error(err);
 
+  // Handle CORS errors specifically
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      success: false,
+      error: 'CORS: Origin not allowed',
+      message: 'The request origin is not allowed by CORS policy'
+    });
+  }
+
   // Mongoose bad ObjectId
   if (err.name === 'CastError') {
     const message = 'Resource not found';

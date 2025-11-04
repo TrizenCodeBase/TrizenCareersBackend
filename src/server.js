@@ -47,23 +47,31 @@ app.use(helmet({
 
 // CORS configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',') 
-  : ['http://localhost:3000', 'http://localhost:8080'];
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : ['http://localhost:3000', 'http://localhost:8080', 'http://localhost:3001'];
+
+logger.info('Allowed CORS origins:', allowedOrigins);
 
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      return callback(null, true);
+    }
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      logger.warn(`CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  optionsSuccessStatus: 200 // Some legacy browsers choke on 204
 }));
 
 // Rate limiting

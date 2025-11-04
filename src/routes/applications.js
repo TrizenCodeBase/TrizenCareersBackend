@@ -372,11 +372,34 @@ router.get('/my', protect, async (req, res) => {
   }
 });
 
+// Helper function to find application by ID across all collections
+const findApplicationById = async (applicationId) => {
+  const { getAllApplicationModels } = await import('../models/ApplicationFactory.js');
+  const allModels = getAllApplicationModels();
+  
+  for (const { jobId, model } of allModels) {
+    try {
+      const application = await model.findById(applicationId)
+        .populate('appliedBy', 'username email firstName lastName role');
+      
+      if (application) {
+        // Add jobId to the application for identification
+        application.jobId = jobId;
+        return application;
+      }
+    } catch (error) {
+      // Continue searching in other collections if this one fails
+      continue;
+    }
+  }
+  
+  return null;
+};
+
 // GET /api/v1/applications/:id - Get specific application
 router.get('/:id', protect, async (req, res) => {
   try {
-    const application = await Application.findById(req.params.id)
-      .populate('appliedBy', 'username email firstName lastName role');
+    const application = await findApplicationById(req.params.id);
 
     if (!application) {
       return res.status(404).json({
@@ -386,7 +409,7 @@ router.get('/:id', protect, async (req, res) => {
     }
 
     // Check if user can access this application
-    if (req.user.role !== 'admin' && application.appliedBy._id.toString() !== req.user._id.toString()) {
+    if (req.user.role !== 'admin' && application.appliedBy?._id?.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
         error: 'Access denied'
@@ -425,11 +448,8 @@ router.put('/:id/status', protect, async (req, res) => {
       });
     }
 
-    const application = await Application.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true }
-    ).populate('appliedBy', 'username email firstName lastName role');
+    // Find the application first to determine which collection it's in
+    const application = await findApplicationById(req.params.id);
 
     if (!application) {
       return res.status(404).json({
@@ -438,12 +458,29 @@ router.put('/:id/status', protect, async (req, res) => {
       });
     }
 
-    logger.info(`Application status updated: ${application._id} to ${status}`);
+    // Get the correct model for this jobId
+    const ApplicationModel = getApplicationModel(application.jobId);
+    
+    // Update the application
+    const updatedApplication = await ApplicationModel.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    ).populate('appliedBy', 'username email firstName lastName role');
+
+    if (!updatedApplication) {
+      return res.status(404).json({
+        success: false,
+        error: 'Application not found'
+      });
+    }
+
+    logger.info(`Application status updated: ${updatedApplication._id} to ${status}`);
 
     res.json({
       success: true,
       message: 'Application status updated successfully',
-      data: application
+      data: updatedApplication
     });
   } catch (error) {
     logger.error('Error updating application status:', error);
