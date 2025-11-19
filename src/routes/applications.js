@@ -253,13 +253,20 @@ router.get('/', async (req, res) => {
         .sort(sortOptions)
         .limit(limit * 1)
         .skip((page - 1) * limit)
+        .lean()
         .exec();
 
       const total = await ApplicationModel.countDocuments(query);
 
+      // Add jobId to each application
+      const applicationsWithJobId = applications.map(app => ({
+        ...app,
+        jobId
+      }));
+
       return res.json({
         success: true,
-        data: applications,
+        data: applicationsWithJobId,
         pagination: {
           currentPage: page,
           totalPages: Math.ceil(total / limit),
@@ -280,14 +287,16 @@ router.get('/', async (req, res) => {
         const applications = await model.find(query)
           .populate('appliedBy', 'username email firstName lastName role')
           .sort(sortOptions)
+          .lean()
           .exec();
 
         // Add jobId to each application for identification
-        applications.forEach(app => {
-          app.jobId = modelJobId;
-        });
+        const applicationsWithJobId = applications.map(app => ({
+          ...app,
+          jobId: modelJobId
+        }));
 
-        allApplications = allApplications.concat(applications);
+        allApplications = allApplications.concat(applicationsWithJobId);
         totalApplications += await model.countDocuments(query);
       }
 
@@ -380,12 +389,15 @@ const findApplicationById = async (applicationId) => {
   for (const { jobId, model } of allModels) {
     try {
       const application = await model.findById(applicationId)
-        .populate('appliedBy', 'username email firstName lastName role');
+        .populate('appliedBy', 'username email firstName lastName role')
+        .lean();
       
       if (application) {
         // Add jobId to the application for identification
-        application.jobId = jobId;
-        return application;
+        return {
+          ...application,
+          jobId
+        };
       }
     } catch (error) {
       // Continue searching in other collections if this one fails
