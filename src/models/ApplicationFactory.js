@@ -45,6 +45,20 @@ const baseApplicationSchema = new mongoose.Schema({
     enum: ['pending', 'reviewed', 'shortlisted', 'rejected', 'accepted'],
     default: 'pending'
   },
+  // Email tracking fields
+  emailSent: {
+    type: Boolean,
+    default: false
+  },
+  emailSentAt: {
+    type: Date,
+    default: null
+  },
+  emailType: {
+    type: String,
+    enum: ['acceptance', 'rejection', null],
+    default: null
+  },
   appliedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
