@@ -219,11 +219,6 @@ router.get('/', async (req, res) => {
       query.status = status;
     }
 
-    // Filter by job ID
-    if (jobId) {
-      query.jobId = jobId;
-    }
-
     // Search functionality
     if (search) {
       query.$or = [
@@ -247,6 +242,8 @@ router.get('/', async (req, res) => {
         });
       }
 
+      // Note: Don't add jobId to query since documents don't have this field
+      // The collection itself already filters by jobId
       const ApplicationModel = getApplicationModel(jobId);
       const applications = await ApplicationModel.find(query)
         .populate('appliedBy', 'username email firstName lastName role')
@@ -473,10 +470,24 @@ router.put('/:id/status', protect, async (req, res) => {
     // Get the correct model for this jobId
     const ApplicationModel = getApplicationModel(application.jobId);
     
+    // Store old status to check if we need to reset email tracking
+    const oldStatus = application.status;
+    
+    // Prepare update object
+    const updateData = { status };
+    
+    // If status is changing, reset email tracking so fresh emails can be sent
+    if (oldStatus !== status) {
+      updateData.emailSent = false;
+      updateData.emailSentAt = null;
+      updateData.emailType = null;
+      logger.info(`Status changed from ${oldStatus} to ${status}, resetting email tracking`);
+    }
+    
     // Update the application
     const updatedApplication = await ApplicationModel.findByIdAndUpdate(
       req.params.id,
-      { status },
+      updateData,
       { new: true }
     ).populate('appliedBy', 'username email firstName lastName role');
 
@@ -487,7 +498,7 @@ router.put('/:id/status', protect, async (req, res) => {
       });
     }
 
-    logger.info(`Application status updated: ${updatedApplication._id} to ${status}`);
+    logger.info(`Application status updated: ${updatedApplication._id} from ${oldStatus} to ${status}`);
 
     res.json({
       success: true,
@@ -663,10 +674,10 @@ router.get('/stats/overview', protect, async (req, res) => {
 
 // Email Service Configuration
 const EMAIL_SERVICE_CONFIG = {
-  baseUrl: process.env.NODE_ENV === 'production' 
+  baseUrl: process.env.EMAIL_SERVICE_URL || (process.env.NODE_ENV === 'production' 
     ? 'https://trizensupportemailservice.llp.trizenventures.com'
-    : 'http://localhost:3002',
-  apiKey: 'trizen-support-email-2024-secure-key-xyz789'
+    : 'http://localhost:3002'),
+  apiKey: process.env.EMAIL_SERVICE_API_KEY || 'trizen-support-email-2024-secure-key-xyz789'
 };
 
 // POST /api/v1/applications/send-confirmation-email - Send job application confirmation email
@@ -730,6 +741,197 @@ router.post('/send-confirmation-email', protect, async (req, res) => {
 
   } catch (error) {
     logger.error('Error sending confirmation email:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error while sending email'
+    });
+  }
+});
+
+// POST /api/v1/applications/:id/send-acceptance-email - Send acceptance email (admin only)
+router.post('/:id/send-acceptance-email', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Admin privileges required.'
+      });
+    }
+
+    // Find the application
+    const application = await findApplicationById(req.params.id);
+
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        error: 'Application not found'
+      });
+    }
+
+    // Check if application is accepted
+    if (application.status !== 'accepted') {
+      return res.status(400).json({
+        success: false,
+        error: 'Application status must be "accepted" to send acceptance email'
+      });
+    }
+
+    // Get job title mapping
+    const getJobTitle = (jobId) => {
+      const jobMap = {
+        'TV-AIML-INT-2025-001': 'AIML Intern',
+        'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
+        'TV-MKT-SMM-2025-003': 'Social Media Management Intern',
+      };
+      return jobMap[jobId] || jobId;
+    };
+
+    // Send acceptance email
+    logger.info(`Sending acceptance email to: ${application.email}`);
+    logger.info(`Email service base URL: ${EMAIL_SERVICE_CONFIG.baseUrl}`);
+    logger.info(`API Key (first 10 chars): ${EMAIL_SERVICE_CONFIG.apiKey ? EMAIL_SERVICE_CONFIG.apiKey.substring(0, 10) + '...' : 'NOT SET'}`);
+    
+    const emailResponse = await fetch(`${EMAIL_SERVICE_CONFIG.baseUrl}/api/support/send-application-acceptance`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': EMAIL_SERVICE_CONFIG.apiKey,
+      },
+      body: JSON.stringify({
+        applicantEmail: application.email,
+        applicantName: application.fullName,
+        jobTitle: getJobTitle(application.jobId),
+        jobId: application.jobId
+      })
+    });
+
+    const emailResult = await emailResponse.json();
+
+    if (!emailResponse.ok) {
+      logger.error('Failed to send acceptance email:', emailResult);
+      logger.error('Email service URL:', EMAIL_SERVICE_CONFIG.baseUrl);
+      logger.error('API Key used:', EMAIL_SERVICE_CONFIG.apiKey ? 'Set' : 'Not set');
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to send acceptance email',
+        details: emailResult.error || emailResult.message || 'Email service error'
+      });
+    }
+
+    logger.info(`Acceptance email sent successfully to ${application.email} for application ${application._id}`);
+
+    // Update application to mark email as sent
+    const ApplicationModel = getApplicationModel(application.jobId);
+    await ApplicationModel.findByIdAndUpdate(
+      application._id,
+      {
+        emailSent: true,
+        emailSentAt: new Date(),
+        emailType: 'acceptance'
+      }
+    );
+
+    res.json({
+      success: true,
+      message: 'Acceptance email sent successfully',
+      data: emailResult.data
+    });
+
+  } catch (error) {
+    logger.error('Error sending acceptance email:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error while sending email',
+      details: error.message
+    });
+  }
+});
+
+// POST /api/v1/applications/:id/send-rejection-email - Send rejection email (admin only)
+router.post('/:id/send-rejection-email', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Admin privileges required.'
+      });
+    }
+
+    // Find the application
+    const application = await findApplicationById(req.params.id);
+
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        error: 'Application not found'
+      });
+    }
+
+    // Check if application is rejected
+    if (application.status !== 'rejected') {
+      return res.status(400).json({
+        success: false,
+        error: 'Application status must be "rejected" to send rejection email'
+      });
+    }
+
+    // Get job title mapping
+    const getJobTitle = (jobId) => {
+      const jobMap = {
+        'TV-AIML-INT-2025-001': 'AIML Intern',
+        'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
+        'TV-MKT-SMM-2025-003': 'Social Media Management Intern',
+      };
+      return jobMap[jobId] || jobId;
+    };
+
+    // Send rejection email
+    const emailResponse = await fetch(`${EMAIL_SERVICE_CONFIG.baseUrl}/api/support/send-application-rejection`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': EMAIL_SERVICE_CONFIG.apiKey,
+      },
+      body: JSON.stringify({
+        applicantEmail: application.email,
+        applicantName: application.fullName,
+        jobTitle: getJobTitle(application.jobId),
+        jobId: application.jobId
+      })
+    });
+
+    const emailResult = await emailResponse.json();
+
+    if (!emailResponse.ok) {
+      logger.error('Failed to send rejection email:', emailResult);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to send rejection email',
+        details: emailResult.message || 'Email service error'
+      });
+    }
+
+    logger.info(`Rejection email sent successfully to ${application.email} for application ${application._id}`);
+
+    // Update application to mark email as sent
+    const ApplicationModel = getApplicationModel(application.jobId);
+    await ApplicationModel.findByIdAndUpdate(
+      application._id,
+      {
+        emailSent: true,
+        emailSentAt: new Date(),
+        emailType: 'rejection'
+      }
+    );
+
+    res.json({
+      success: true,
+      message: 'Rejection email sent successfully',
+      data: emailResult.data
+    });
+
+  } catch (error) {
+    logger.error('Error sending rejection email:', error);
     res.status(500).json({
       success: false,
       error: 'Server error while sending email'
