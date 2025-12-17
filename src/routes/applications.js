@@ -1,6 +1,6 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
-import { getApplicationModel, isSupportedJobId } from '../models/ApplicationFactory.js';
+import { getApplicationModel, isSupportedJobId, getAllApplicationModels } from '../models/ApplicationFactory.js';
 import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
@@ -628,21 +628,11 @@ router.get('/candidates', protect, async (req, res) => {
 // GET /api/v1/applications/stats - Get application statistics (public)
 router.get('/stats/overview', protect, async (req, res) => {
   try {
-
-    const stats = await Application.aggregate([
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    const totalApplications = await Application.countDocuments();
-    const recentApplications = await Application.countDocuments({
-      createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-    });
-
+    // Get all application models
+    const allModels = getAllApplicationModels();
+    
+    let totalApplications = 0;
+    let recentApplications = 0;
     const statusCounts = {
       pending: 0,
       reviewed: 0,
@@ -651,9 +641,31 @@ router.get('/stats/overview', protect, async (req, res) => {
       accepted: 0
     };
 
-    stats.forEach(stat => {
-      statusCounts[stat._id] = stat.count;
-    });
+    // Aggregate stats across all job application collections
+    for (const { model } of allModels) {
+      const stats = await model.aggregate([
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ]);
+
+      const total = await model.countDocuments();
+      const recent = await model.countDocuments({
+        createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+      });
+
+      totalApplications += total;
+      recentApplications += recent;
+
+      stats.forEach(stat => {
+        if (statusCounts[stat._id] !== undefined) {
+          statusCounts[stat._id] += stat.count;
+        }
+      });
+    }
 
     res.json({
       success: true,

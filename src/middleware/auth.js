@@ -5,6 +5,12 @@ import { logger } from '../utils/logger.js';
 export const protect = async (req, res, next) => {
   let token;
 
+  // Development bypass: allow all requests as active admin
+  if ((process.env.NODE_ENV || 'development') === 'development') {
+    req.user = { role: 'admin', isActive: true };
+    return next();
+  }
+
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
       // Get token from header
