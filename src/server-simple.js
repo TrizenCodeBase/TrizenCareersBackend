@@ -9,7 +9,7 @@ const app = express();
 // CORS configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',') 
-  : ['http://localhost:3000', 'http://localhost:8080', 'https://careers.trizenventures.com'];
+  : ['http://localhost:3000', 'http://localhost:8080', 'https://careers.trizenventures.com', 'http://localhost:3001'];
 
 app.use(cors({
   origin: function (origin, callback) {

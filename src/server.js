@@ -48,7 +48,7 @@ app.use(helmet({
 // CORS configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-  : ['http://localhost:3000', 'http://localhost:8080', 'http://localhost:3001'];
+  : ['http://localhost:3000', 'http://localhost:8080', 'https://careers.trizenventures.com', 'http://localhost:3001'];
 
 logger.info('Allowed CORS origins:', allowedOrigins);
 
