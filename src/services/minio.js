@@ -193,7 +193,7 @@ export async function uploadResume(buffer, objectName, contentType) {
         });
         throw retryErr;
       }
-    } else if (code === 'XMLParserError') {
+    } else if (code === 'XMLParserError' || (msg && (msg.includes('XMLParserError') || msg.includes('Unquoted attribute value')))) {
       // MinIO sometimes returns XML the AWS SDK v2 parser rejects. Upload may have succeeded.
       try {
         await s3.headObject({ Bucket: bucket, Key: objectName }).promise();
@@ -201,6 +201,15 @@ export async function uploadResume(buffer, objectName, contentType) {
         const url = getObjectUrl(bucket, objectName);
         return { url, key: objectName };
       } catch (headErr) {
+        const headCode = headErr.code || headErr.statusCode;
+        const headMsg = headErr.message || '';
+        const headAlsoXmlError = headCode === 'XMLParserError' || (headMsg && (headMsg.includes('XMLParserError') || headMsg.includes('Unquoted attribute value')));
+        if (headAlsoXmlError) {
+          // Verification also got bad XML; assume upload succeeded (MinIO often saves but returns malformed XML)
+          logger.warn('MinIO returned unparseable XML for putObject and headObject; assuming upload succeeded', { bucket, key: objectName });
+          const url = getObjectUrl(bucket, objectName);
+          return { url, key: objectName };
+        }
         logger.error('MinIO putObject returned unparseable response; object not found on verify', {
           bucket,
           key: objectName,
