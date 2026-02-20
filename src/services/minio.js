@@ -28,10 +28,19 @@ function normalizeEndpoint(raw) {
 
 function getClient() {
   if (client) return client;
-  const rawEndpoint = process.env.MINIO_ENDPOINT;
+  const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
   const endPoint = normalizeEndpoint(rawEndpoint);
-  const port = parseInt(process.env.MINIO_PORT || '9000', 10);
-  const useSSL = process.env.MINIO_USE_SSL === 'true' || (rawEndpoint && rawEndpoint.trim().toLowerCase().startsWith('https://'));
+  const isHttps = rawEndpoint.toLowerCase().startsWith('https://');
+  // Default port: 443 for https URL, 80 for http URL, else 9000 (direct MinIO)
+  const defaultPort = process.env.MINIO_PORT
+    ? process.env.MINIO_PORT
+    : isHttps
+      ? '443'
+      : rawEndpoint.toLowerCase().startsWith('http://')
+        ? '80'
+        : '9000';
+  const port = parseInt(defaultPort, 10);
+  const useSSL = process.env.MINIO_USE_SSL === 'true' || isHttps;
   const accessKey = process.env.MINIO_ACCESS_KEY;
   const secretKey = process.env.MINIO_SECRET_KEY;
 
@@ -100,10 +109,11 @@ export async function uploadResume(buffer, objectName, contentType) {
   if (publicBase) {
     url = publicBase.replace(/\/$/, '') + '/' + objectName;
   } else {
-    const host = normalizeEndpoint(process.env.MINIO_ENDPOINT);
-    const port = process.env.MINIO_PORT || '9000';
-    const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
-    const useSSL = process.env.MINIO_USE_SSL === 'true' || rawEndpoint.toLowerCase().startsWith('https://');
+    const raw = (process.env.MINIO_ENDPOINT || '').trim();
+    const host = normalizeEndpoint(raw);
+    const isHttps = raw.toLowerCase().startsWith('https://');
+    const port = process.env.MINIO_PORT || (isHttps ? '443' : raw.toLowerCase().startsWith('http://') ? '80' : '9000');
+    const useSSL = process.env.MINIO_USE_SSL === 'true' || isHttps;
     const protocol = useSSL ? 'https' : 'http';
     const portPart = (useSSL && port === '443') || (!useSSL && port === '80') ? '' : `:${port}`;
     url = `${protocol}://${host}${portPart}/${bucket}/${objectName}`;
