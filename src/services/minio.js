@@ -2,15 +2,12 @@
  * MinIO service for resume file storage.
  *
  * Environment variables:
- *   MINIO_ENDPOINT   - MinIO server hostname or URL (e.g. minio.example.com or https://minio.example.com; protocol is stripped)
- *   MINIO_PORT       - Port (default: 9000)
- *   MINIO_USE_SSL    - 'true' or 'false' (default: false)
+ *   MINIO_ENDPOINT   - Full URL or hostname (e.g. https://minio.example.com or https://minio.example.com:443).
+ *                      Port and SSL are derived from the URL only (MINIO_PORT and MINIO_USE_SSL are ignored).
  *   MINIO_ACCESS_KEY - Access key
  *   MINIO_SECRET_KEY - Secret key
  *   MINIO_BUCKET     - Bucket name for resumes (e.g. careers-resumes)
- *   MINIO_PUBLIC_URL - Optional. Base URL for public object access (e.g. https://minio.example.com/careers-resumes).
- *                      If not set, URL is built from endpoint/port/bucket.
- *                      For resume links to open in browser, ensure the bucket allows GetObject (e.g. bucket policy or public read).
+ *   MINIO_PUBLIC_URL - Optional. Base URL for public object access.
  */
 
 import * as Minio from 'minio';
@@ -18,38 +15,35 @@ import { logger } from '../utils/logger.js';
 
 let client = null;
 
-function normalizeEndpoint(raw) {
-  if (!raw || typeof raw !== 'string') return '';
+/**
+ * Parse MINIO_ENDPOINT URL. Derive host, port and useSSL only from the URL (no env port/ssl).
+ */
+function parseEndpointUrl(raw) {
+  if (!raw || typeof raw !== 'string') return { host: '', port: 9000, useSSL: false };
   const s = raw.trim();
-  const match = s.match(/^(?:https?:\/\/)?([^/:#]+)(?::(\d+))?/);
-  const host = match ? match[1] : s.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
-  return host;
+  const lower = s.toLowerCase();
+  const hasHttps = lower.startsWith('https://');
+  const hasHttp = lower.startsWith('http://');
+  const withoutProtocol = s.replace(/^https?:\/\//i, '').split('/')[0];
+  const [host, portStr] = withoutProtocol.split(':');
+  const port = portStr ? parseInt(portStr, 10) : (hasHttps ? 443 : hasHttp ? 80 : 9000);
+  const useSSL = hasHttps;
+  return { host: host || '', port: Number.isFinite(port) ? port : 9000, useSSL };
 }
 
 function getClient() {
   if (client) return client;
   const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
-  const endPoint = normalizeEndpoint(rawEndpoint);
-  const isHttps = rawEndpoint.toLowerCase().startsWith('https://');
-  // Default port: 443 for https URL, 80 for http URL, else 9000 (direct MinIO)
-  const defaultPort = process.env.MINIO_PORT
-    ? process.env.MINIO_PORT
-    : isHttps
-      ? '443'
-      : rawEndpoint.toLowerCase().startsWith('http://')
-        ? '80'
-        : '9000';
-  const port = parseInt(defaultPort, 10);
-  const useSSL = process.env.MINIO_USE_SSL === 'true' || isHttps;
+  const { host, port, useSSL } = parseEndpointUrl(rawEndpoint);
   const accessKey = process.env.MINIO_ACCESS_KEY;
   const secretKey = process.env.MINIO_SECRET_KEY;
 
-  if (!endPoint || !accessKey || !secretKey) {
+  if (!host || !accessKey || !secretKey) {
     return null;
   }
 
   client = new Minio.Client({
-    endPoint,
+    endPoint: host,
     port,
     useSSL,
     accessKey,
@@ -110,13 +104,10 @@ export async function uploadResume(buffer, objectName, contentType) {
     url = publicBase.replace(/\/$/, '') + '/' + objectName;
   } else {
     const raw = (process.env.MINIO_ENDPOINT || '').trim();
-    const host = normalizeEndpoint(raw);
-    const isHttps = raw.toLowerCase().startsWith('https://');
-    const port = process.env.MINIO_PORT || (isHttps ? '443' : raw.toLowerCase().startsWith('http://') ? '80' : '9000');
-    const useSSL = process.env.MINIO_USE_SSL === 'true' || isHttps;
-    const protocol = useSSL ? 'https' : 'http';
-    const portPart = (useSSL && port === '443') || (!useSSL && port === '80') ? '' : `:${port}`;
-    url = `${protocol}://${host}${portPart}/${bucket}/${objectName}`;
+    const { host: h, port: p, useSSL: ssl } = parseEndpointUrl(raw);
+    const protocol = ssl ? 'https' : 'http';
+    const portPart = (ssl && p === 443) || (!ssl && p === 80) ? '' : `:${p}`;
+    url = `${protocol}://${h}${portPart}/${bucket}/${objectName}`;
   }
 
   return { url, key: objectName };
