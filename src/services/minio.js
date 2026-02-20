@@ -1,120 +1,184 @@
 /**
- * MinIO service for resume file storage.
+ * MinIO / S3-compatible storage for resume uploads.
+ *
+ * Uses AWS SDK S3 client (MinIO is S3-compatible). Endpoint is a single URL;
+ * if the URL has no explicit port, port 9000 is not forced (avoids hitting
+ * wrong port when served via 443/80).
  *
  * Environment variables:
- *   MINIO_ENDPOINT   - Full URL or hostname (e.g. https://minio.example.com or https://minio.example.com:443).
- *                      Port and SSL are derived from the URL only (MINIO_PORT and MINIO_USE_SSL are ignored).
- *   MINIO_ACCESS_KEY - Access key
- *   MINIO_SECRET_KEY - Secret key
- *   MINIO_BUCKET     - Bucket name for resumes (e.g. careers-resumes)
- *   MINIO_PUBLIC_URL - Optional. Base URL for public object access.
+ *   MINIO_ENDPOINT   - Full URL (e.g. https://minio.example.com or https://host:9000)
+ *   MINIO_ACCESS_KEY or MINIO_ROOT_USER
+ *   MINIO_SECRET_KEY or MINIO_ROOT_PASSWORD
+ *   MINIO_BUCKET     - Bucket name (default: careers-resumes)
+ *   MINIO_PUBLIC_URL - Optional base URL for resume links (else presigned or endpoint URL)
+ *   MINIO_REGION     - Optional (default: us-east-1)
  */
 
-import * as Minio from 'minio';
+import { createRequire } from 'module';
 import { logger } from '../utils/logger.js';
 
-let client = null;
+const require = createRequire(import.meta.url);
+const AWS = require('aws-sdk');
+
+const DEFAULT_BUCKET = 'careers-resumes';
+const DEFAULT_REGION = 'us-east-1';
+const PRESIGNED_EXPIRY_SECONDS = 31536000; // 1 year
+
+let s3Client = null;
 
 /**
- * Parse MINIO_ENDPOINT URL. Derive host, port and useSSL only from the URL (no env port/ssl).
+ * Build S3 endpoint string from MINIO_ENDPOINT. Do not force port 9000 when URL has no port.
  */
-function parseEndpointUrl(raw) {
-  if (!raw || typeof raw !== 'string') return { host: '', port: 9000, useSSL: false };
-  const s = raw.trim();
-  const lower = s.toLowerCase();
-  const hasHttps = lower.startsWith('https://');
-  const hasHttp = lower.startsWith('http://');
-  const withoutProtocol = s.replace(/^https?:\/\//i, '').split('/')[0];
-  const [host, portStr] = withoutProtocol.split(':');
-  const port = portStr ? parseInt(portStr, 10) : (hasHttps ? 443 : hasHttp ? 80 : 9000);
-  const useSSL = hasHttps;
-  return { host: host || '', port: Number.isFinite(port) ? port : 9000, useSSL };
+function buildEndpoint(rawEndpoint, rawPort, useSSL) {
+  let protocol = useSSL ? 'https' : 'http';
+  let host = 'localhost';
+  let port = rawPort || '9000';
+
+  if (rawEndpoint && typeof rawEndpoint === 'string') {
+    const raw = rawEndpoint.trim();
+    try {
+      if (raw.includes('://')) {
+        const url = new URL(raw);
+        host = url.hostname || host;
+        port = url.port || rawPort || '';
+        protocol = url.protocol.replace(':', '') || protocol;
+      } else {
+        host = raw;
+      }
+    } catch (e) {
+      logger.warn('Could not parse MINIO_ENDPOINT, using defaults', { rawEndpoint: raw, error: e.message });
+    }
+  }
+
+  return `${protocol}://${host}${port ? `:${port}` : ''}`;
 }
 
-function getClient() {
-  if (client) return client;
-  const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
-  const { host, port, useSSL } = parseEndpointUrl(rawEndpoint);
-  const accessKey = process.env.MINIO_ACCESS_KEY;
-  const secretKey = process.env.MINIO_SECRET_KEY;
+function getS3Client() {
+  if (s3Client) return s3Client;
 
-  if (!host || !accessKey || !secretKey) {
+  const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
+  const rawPort = process.env.MINIO_PORT || '';
+  const useSSL = (process.env.MINIO_USE_SSL || '').toLowerCase() === 'true';
+
+  const endpoint = buildEndpoint(rawEndpoint, rawPort, useSSL);
+  const accessKeyId = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || '';
+  const secretAccessKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || '';
+  const region = process.env.MINIO_REGION || process.env.MINIO_REGION_NAME || DEFAULT_REGION;
+
+  if (!accessKeyId || !secretAccessKey) {
     return null;
   }
 
-  client = new Minio.Client({
-    endPoint: host,
-    port,
-    useSSL,
-    accessKey,
-    secretKey
+  s3Client = new AWS.S3({
+    endpoint,
+    accessKeyId,
+    secretAccessKey,
+    s3ForcePathStyle: true,
+    signatureVersion: 'v4',
+    region,
   });
-  return client;
+
+  return s3Client;
 }
 
 export function isMinioConfigured() {
-  return !!(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY);
+  const endpoint = (process.env.MINIO_ENDPOINT || '').trim();
+  const accessKey = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER;
+  const secretKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD;
+  return !!(endpoint && accessKey && secretKey);
 }
 
-const DEFAULT_BUCKET = 'careers-resumes';
+async function ensureBucketExists(bucket) {
+  const s3 = getS3Client();
+  if (!s3) throw new Error('MinIO is not configured.');
 
-async function ensureBucket(minioClient, bucket) {
   try {
-    const exists = await minioClient.bucketExists(bucket);
-    if (!exists) {
-      await minioClient.makeBucket(bucket);
-      logger.info('MinIO bucket created', { bucket });
+    await s3.headBucket({ Bucket: bucket }).promise();
+    return true;
+  } catch (headErr) {
+    const code = headErr.code || headErr.statusCode;
+    if (code === 404 || code === 'NotFound') {
+      try {
+        await s3.createBucket({ Bucket: bucket }).promise();
+        logger.info('MinIO bucket created', { bucket });
+        return true;
+      } catch (createErr) {
+        if (
+          createErr.code === 'BucketAlreadyOwnedByYou' ||
+          createErr.code === 'BucketAlreadyExists'
+        ) {
+          return true;
+        }
+        logger.warn('MinIO bucket create failed', { bucket, error: createErr.message });
+        throw createErr;
+      }
     }
-  } catch (err) {
-    logger.warn('MinIO bucket check/create failed (may need manual creation):', err.message);
+    throw headErr;
   }
 }
 
 /**
- * Upload resume buffer to MinIO and return the public URL.
- * @param {Buffer} buffer - File buffer
- * @param {string} objectName - Object key (e.g. resumes/123-filename.pdf)
- * @param {string} contentType - MIME type
- * @returns {Promise<{ url: string, key: string }>}
+ * Get URL for an object: MINIO_PUBLIC_URL, or presigned URL, or endpoint-style URL.
+ */
+function getObjectUrl(bucket, key) {
+  const publicBase = (process.env.MINIO_PUBLIC_URL || '').replace(/\/$/, '');
+  if (publicBase) {
+    return `${publicBase}/${key}`;
+  }
+
+  const s3 = getS3Client();
+  if (!s3) return '';
+
+  try {
+    return s3.getSignedUrl('getObject', {
+      Bucket: bucket,
+      Key: key,
+      Expires: PRESIGNED_EXPIRY_SECONDS,
+    });
+  } catch (err) {
+    logger.warn('Could not generate presigned URL', { error: err.message });
+    const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
+    const rawPort = process.env.MINIO_PORT || '';
+    const useSSL = (process.env.MINIO_USE_SSL || '').toLowerCase() === 'true';
+    const endpoint = buildEndpoint(rawEndpoint, rawPort, useSSL);
+    return `${endpoint}/${bucket}/${key}`;
+  }
+}
+
+/**
+ * Upload resume buffer to MinIO (S3-compatible) and return the URL and key.
  */
 export async function uploadResume(buffer, objectName, contentType) {
   if (!buffer || typeof buffer.length !== 'number') {
-    throw new Error('Invalid file buffer: buffer is required for MinIO upload.');
+    throw new Error('Invalid file buffer: buffer is required for upload.');
   }
 
   const bucket = process.env.MINIO_BUCKET || DEFAULT_BUCKET;
-  const minioClient = getClient();
+  const s3 = getS3Client();
 
-  if (!minioClient) {
+  if (!s3) {
     throw new Error('MinIO is not configured. Set MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY.');
   }
 
-  await ensureBucket(minioClient, bucket);
+  await ensureBucketExists(bucket);
 
-  const metaData = {
-    'Content-Type': contentType
+  const params = {
+    Bucket: bucket,
+    Key: objectName,
+    Body: buffer,
+    ContentType: contentType,
   };
 
-  await minioClient.putObject(bucket, objectName, buffer, buffer.length, metaData);
+  await s3.upload(params).promise();
   logger.info('Resume uploaded to MinIO', { bucket, objectName });
 
-  const publicBase = process.env.MINIO_PUBLIC_URL;
-  let url;
-  if (publicBase) {
-    url = publicBase.replace(/\/$/, '') + '/' + objectName;
-  } else {
-    const raw = (process.env.MINIO_ENDPOINT || '').trim();
-    const { host: h, port: p, useSSL: ssl } = parseEndpointUrl(raw);
-    const protocol = ssl ? 'https' : 'http';
-    const portPart = (ssl && p === 443) || (!ssl && p === 80) ? '' : `:${p}`;
-    url = `${protocol}://${h}${portPart}/${bucket}/${objectName}`;
-  }
+  const url = getObjectUrl(bucket, objectName);
 
   return { url, key: objectName };
 }
 
 export default {
-  getClient,
+  getS3Client: getS3Client,
   isMinioConfigured,
-  uploadResume
+  uploadResume,
 };
