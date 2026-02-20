@@ -174,6 +174,7 @@ app.get('/api/docs', (req, res) => {
       },
       applications: {
         'POST /api/v1/applications': 'Submit job application (protected)',
+        'POST /api/v1/applications/upload-resume': 'Upload resume file (protected, multipart/form-data)',
         'GET /api/v1/applications': 'Get all applications (admin only)',
         'GET /api/v1/applications/my': 'Get user\'s applications (protected)',
         'GET /api/v1/applications/:id': 'Get specific application (protected)',
