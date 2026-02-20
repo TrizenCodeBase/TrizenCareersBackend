@@ -92,33 +92,26 @@ export function isMinioConfigured() {
   return !!(endpoint && accessKey && secretKey);
 }
 
-async function ensureBucketExists(bucket) {
+/**
+ * Create bucket if it doesn't exist. Avoids headBucket which can return 400 behind some proxies.
+ */
+async function createBucketIfNeeded(bucket) {
   const s3 = getS3Client();
   if (!s3) throw new Error('MinIO is not configured.');
 
   try {
-    await s3.headBucket({ Bucket: bucket }).promise();
-    return true;
-  } catch (headErr) {
-    const code = headErr.code || headErr.statusCode;
-    if (code === 404 || code === 'NotFound') {
-      try {
-        await s3.createBucket({ Bucket: bucket }).promise();
-        logger.info('MinIO bucket created', { bucket });
-        return true;
-      } catch (createErr) {
-        if (
-          createErr.code === 'BucketAlreadyOwnedByYou' ||
-          createErr.code === 'BucketAlreadyExists'
-        ) {
-          return true;
-        }
-        logger.warn('MinIO bucket create failed', { bucket, error: createErr.message, code: createErr.code });
-        throw createErr;
-      }
+    await s3.createBucket({ Bucket: bucket }).promise();
+    logger.info('MinIO bucket created', { bucket });
+  } catch (createErr) {
+    if (
+      createErr.code === 'BucketAlreadyOwnedByYou' ||
+      createErr.code === 'BucketAlreadyExists' ||
+      (createErr.message && createErr.message.includes('already own'))
+    ) {
+      return;
     }
-    logger.warn('MinIO headBucket failed', { bucket, code, message: headErr.message });
-    throw headErr;
+    logger.warn('MinIO createBucket failed (bucket may already exist)', { bucket, code: createErr.code });
+    throw createErr;
   }
 }
 
@@ -166,8 +159,6 @@ export async function uploadResume(buffer, objectName, contentType) {
     throw new Error('MinIO is not configured. Set MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY.');
   }
 
-  await ensureBucketExists(bucket);
-
   const params = {
     Bucket: bucket,
     Key: objectName,
@@ -178,17 +169,31 @@ export async function uploadResume(buffer, objectName, contentType) {
   try {
     await s3.putObject(params).promise();
   } catch (putErr) {
-    const msg = putErr.message || '';
     const code = putErr.code || putErr.statusCode;
-    const body = putErr.body || putErr.response?.body;
-    logger.error('MinIO putObject failed', {
-      code,
-      message: msg,
-      bucket,
-      key: objectName,
-      body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
-    });
-    throw putErr;
+    const msg = putErr.message || '';
+
+    if (code === 'NotFound' || code === 404 || (msg && (msg.includes('NoSuchBucket') || msg.includes('no such bucket')))) {
+      try {
+        await createBucketIfNeeded(bucket);
+        await s3.putObject(params).promise();
+      } catch (retryErr) {
+        logger.error('MinIO putObject failed after createBucket', {
+          code: retryErr.code,
+          message: retryErr.message,
+          bucket,
+          key: objectName,
+        });
+        throw retryErr;
+      }
+    } else {
+      logger.error('MinIO putObject failed', {
+        code,
+        message: msg,
+        bucket,
+        key: objectName,
+      });
+      throw putErr;
+    }
   }
 
   logger.info('Resume uploaded to MinIO', { bucket, objectName });
