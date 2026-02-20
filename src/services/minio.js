@@ -11,6 +11,7 @@
  *   MINIO_ACCESS_KEY or MINIO_ROOT_USER
  *   MINIO_SECRET_KEY or MINIO_ROOT_PASSWORD
  *   MINIO_BUCKET             - Bucket name (default: careers-resumes)
+ *   MINIO_BUCKET_PUBLIC      - If "true", return raw public URL (bucket must be public in MinIO). Else return presigned URL.
  *   MINIO_REGION             - Optional (default: us-east-1)
  */
 
@@ -22,7 +23,7 @@ const AWS = require('aws-sdk');
 
 const DEFAULT_BUCKET = 'careers-resumes';
 const DEFAULT_REGION = 'us-east-1';
-const PRESIGNED_EXPIRY_SECONDS = 31536000; // 1 year
+const PRESIGNED_EXPIRY_SECONDS = 7 * 24 * 60 * 60; // 7 days (SigV4 max)
 
 let s3Client = null;
 let presignClient = null;
@@ -150,11 +151,19 @@ async function createBucketIfNeeded(bucket) {
 }
 
 /**
- * Return a presigned URL for the object. Uses MINIO_PUBLIC_ENDPOINT when set so the URL works in the browser.
+ * Return URL for the object. If MINIO_BUCKET_PUBLIC=true, return raw public URL (bucket must be public in MinIO).
+ * Otherwise return presigned URL so it works for private buckets.
  */
 function getObjectUrl(bucket, key) {
+  const publicEndpoint = (process.env.MINIO_PUBLIC_ENDPOINT || process.env.MINIO_ENDPOINT || '').trim().replace(/\/$/, '');
+  const bucketPublic = (process.env.MINIO_BUCKET_PUBLIC || '').toLowerCase() === 'true';
+
+  if (bucketPublic && publicEndpoint) {
+    return `${publicEndpoint}/${bucket}/${key}`;
+  }
+
   const s3 = getPresignClient();
-  if (!s3) return '';
+  if (!s3) return publicEndpoint ? `${publicEndpoint}/${bucket}/${key}` : '';
   try {
     return s3.getSignedUrl('getObject', {
       Bucket: bucket,
@@ -163,9 +172,19 @@ function getObjectUrl(bucket, key) {
     });
   } catch (err) {
     logger.warn('Could not generate presigned URL', { error: err.message });
-    const endpoint = (process.env.MINIO_PUBLIC_ENDPOINT || process.env.MINIO_ENDPOINT || '').trim().replace(/\/$/, '');
-    if (endpoint) return `${endpoint}/${bucket}/${key}`;
-    return '';
+    const fallback = getS3Client();
+    if (fallback) {
+      try {
+        return fallback.getSignedUrl('getObject', {
+          Bucket: bucket,
+          Key: key,
+          Expires: PRESIGNED_EXPIRY_SECONDS,
+        });
+      } catch (e) {
+        logger.warn('Presign fallback failed', { error: e.message });
+      }
+    }
+    return publicEndpoint ? `${publicEndpoint}/${bucket}/${key}` : '';
   }
 }
 
