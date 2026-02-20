@@ -1,20 +1,17 @@
 /**
  * MinIO / S3-compatible storage for resume uploads.
  *
- * The backend connects to whatever S3-compatible endpoint you set in MINIO_* env vars
- * and stores resume files there. No hardcoded hosts or app names — fully env-driven.
- *
- * MinIO has two ports: API (9000) for S3, Console (9001) for web UI. Use the API endpoint.
+ * Resume links are returned as presigned URLs so the Careers Admin Frontend can use them directly.
+ * Set MINIO_PUBLIC_ENDPOINT to the MinIO API URL reachable from the browser (e.g. https://minio.example.com:9000).
  *
  * Environment variables:
- *   MINIO_ENDPOINT   - Full URL to S3/MinIO API (e.g. http://srv-captain--trizencareer:9000 or https://host:9000).
- *   MINIO_API_PORT   - Optional. Used when MINIO_ENDPOINT has no port (default 9000).
+ *   MINIO_ENDPOINT           - S3/MinIO API URL for backend operations (e.g. http://srv-captain--trizencareer:9000).
+ *   MINIO_PUBLIC_ENDPOINT    - Same but reachable from browser; used for presigned URLs (e.g. https://trizencareer.llp.trizenventures.com:9000).
+ *   MINIO_API_PORT           - Optional. Used when MINIO_ENDPOINT has no port (default 9000).
  *   MINIO_ACCESS_KEY or MINIO_ROOT_USER
  *   MINIO_SECRET_KEY or MINIO_ROOT_PASSWORD
- *   MINIO_BUCKET     - Bucket name (default: careers-resumes)
- *   MINIO_PUBLIC_URL - Optional base URL for resume links (else presigned or endpoint URL)
- *   MINIO_RESUME_PROXY_URL - If set, resume links use backend proxy (e.g. https://api.example.com/api/v1/applications/resume) so browsers can open them
- *   MINIO_REGION     - Optional (default: us-east-1)
+ *   MINIO_BUCKET             - Bucket name (default: careers-resumes)
+ *   MINIO_REGION             - Optional (default: us-east-1)
  */
 
 import { createRequire } from 'module';
@@ -28,6 +25,7 @@ const DEFAULT_REGION = 'us-east-1';
 const PRESIGNED_EXPIRY_SECONDS = 31536000; // 1 year
 
 let s3Client = null;
+let presignClient = null;
 
 /**
  * Build S3 endpoint string from MINIO_ENDPOINT.
@@ -94,6 +92,33 @@ function getS3Client() {
   return s3Client;
 }
 
+/**
+ * S3 client used only for generating presigned URLs. Uses MINIO_PUBLIC_ENDPOINT when set
+ * so presigned URLs point to a host reachable from the browser.
+ */
+function getPresignClient() {
+  const publicEndpoint = (process.env.MINIO_PUBLIC_ENDPOINT || '').trim();
+  if (publicEndpoint) {
+    if (!presignClient) {
+      const accessKeyId = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || '';
+      const secretAccessKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || '';
+      const region = process.env.MINIO_REGION || process.env.MINIO_REGION_NAME || DEFAULT_REGION;
+      if (accessKeyId && secretAccessKey) {
+        presignClient = new AWS.S3({
+          endpoint: publicEndpoint.replace(/\/$/, ''),
+          accessKeyId,
+          secretAccessKey,
+          s3ForcePathStyle: true,
+          signatureVersion: 'v4',
+          region,
+        });
+      }
+    }
+    return presignClient || getS3Client();
+  }
+  return getS3Client();
+}
+
 export function isMinioConfigured() {
   const endpoint = (process.env.MINIO_ENDPOINT || '').trim();
   const accessKey = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER;
@@ -125,22 +150,11 @@ async function createBucketIfNeeded(bucket) {
 }
 
 /**
- * Get URL for an object: MINIO_RESUME_PROXY_URL (backend proxy), MINIO_PUBLIC_URL, or presigned/endpoint URL.
- * Use MINIO_RESUME_PROXY_URL when MinIO is internal (e.g. srv-captain--trizencareer:9000) so resume links work in browsers.
+ * Return a presigned URL for the object. Uses MINIO_PUBLIC_ENDPOINT when set so the URL works in the browser.
  */
 function getObjectUrl(bucket, key) {
-  const proxyBase = (process.env.MINIO_RESUME_PROXY_URL || '').replace(/\/$/, '');
-  if (proxyBase) {
-    return `${proxyBase}?key=${encodeURIComponent(key)}`;
-  }
-  const publicBase = (process.env.MINIO_PUBLIC_URL || '').replace(/\/$/, '');
-  if (publicBase) {
-    return `${publicBase}/${key}`;
-  }
-
-  const s3 = getS3Client();
+  const s3 = getPresignClient();
   if (!s3) return '';
-
   try {
     return s3.getSignedUrl('getObject', {
       Bucket: bucket,
@@ -149,44 +163,36 @@ function getObjectUrl(bucket, key) {
     });
   } catch (err) {
     logger.warn('Could not generate presigned URL', { error: err.message });
-    const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
-    const rawPort = process.env.MINIO_PORT || '';
-    const apiPort = process.env.MINIO_API_PORT || '';
-    const useSSL = (process.env.MINIO_USE_SSL || '').toLowerCase() === 'true';
-    const endpoint = buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL);
-    return `${endpoint}/${bucket}/${key}`;
+    const endpoint = (process.env.MINIO_PUBLIC_ENDPOINT || process.env.MINIO_ENDPOINT || '').trim().replace(/\/$/, '');
+    if (endpoint) return `${endpoint}/${bucket}/${key}`;
+    return '';
   }
 }
 
 /**
- * If MINIO_RESUME_PROXY_URL is set, rewrite an internal MinIO resume URL to the proxy URL so it works in browsers.
+ * Get presigned URL for a resume key. Exported for use when resolving resumeLink in API responses.
  */
-export function rewriteResumeLinkForProxy(url) {
-  if (!url || typeof url !== 'string') return url;
-  const proxyBase = (process.env.MINIO_RESUME_PROXY_URL || '').replace(/\/$/, '');
-  if (!proxyBase) return url;
-  const i = url.indexOf('/resumes/');
-  if (i === -1) return url;
-  const key = url.substring(i + 1);
-  return `${proxyBase}?key=${encodeURIComponent(key)}`;
+export function getResumeObjectUrl(bucket, key) {
+  return getObjectUrl(bucket, key);
 }
 
 /**
- * Stream a resume from MinIO (for backend proxy route). Returns { stream, contentType, contentLength } or null.
+ * Extract object key from a stored resume URL (proxy, internal, or presigned).
  */
-export async function getResumeStream(bucket, key) {
-  const s3 = getS3Client();
-  if (!s3) return null;
+export function extractKeyFromResumeLink(url) {
+  if (!url || typeof url !== 'string') return null;
   try {
-    const head = await s3.headObject({ Bucket: bucket, Key: key }).promise();
-    const contentType = head.ContentType || 'application/octet-stream';
-    const contentLength = head.ContentLength;
-    const stream = s3.getObject({ Bucket: bucket, Key: key }).createReadStream();
-    return { stream, contentType, contentLength };
-  } catch (err) {
-    logger.warn('MinIO getResumeStream failed', { bucket, key, error: err.message });
-    return null;
+    const u = new URL(url);
+    const keyParam = u.searchParams.get('key');
+    if (keyParam) return decodeURIComponent(keyParam);
+    const path = u.pathname || '';
+    const match = path.match(/\/resumes\/(.+)$/);
+    if (match) return `resumes/${match[1]}`;
+  } catch (_) {
+    const i = url.indexOf('/resumes/');
+    if (i !== -1) return url.substring(i + 1);
   }
+  return null;
 }
 
 /**
@@ -282,5 +288,6 @@ export default {
   getS3Client: getS3Client,
   isMinioConfigured,
   uploadResume,
-  getResumeStream,
+  getResumeObjectUrl,
+  extractKeyFromResumeLink,
 };

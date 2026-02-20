@@ -8,11 +8,18 @@ import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
 import { fileURLToPath } from 'url';
-import { isMinioConfigured, uploadResume as uploadResumeToMinio, getResumeStream, rewriteResumeLinkForProxy } from '../services/minio.js';
+import { isMinioConfigured, uploadResume as uploadResumeToMinio, getResumeObjectUrl, extractKeyFromResumeLink } from '../services/minio.js';
+
+const RESUME_BUCKET = (process.env.MINIO_BUCKET || 'careers-resumes').toLowerCase();
 
 function rewriteResumeLinks(appOrList) {
   const rewrite = (doc) => {
-    if (doc && doc.resumeLink) doc.resumeLink = rewriteResumeLinkForProxy(doc.resumeLink);
+    if (!doc || !doc.resumeLink) return doc;
+    const key = extractKeyFromResumeLink(doc.resumeLink);
+    if (key && isMinioConfigured()) {
+      const url = getResumeObjectUrl(RESUME_BUCKET, key);
+      if (url) doc.resumeLink = url;
+    }
     return doc;
   };
   return Array.isArray(appOrList) ? appOrList.map(rewrite) : rewrite(appOrList);
@@ -235,47 +242,6 @@ router.post('/upload-resume', protect, (req, res, next) => {
         : message;
     res.status(500).json({ success: false, error: clientMessage });
   }
-});
-
-// GET /api/v1/applications/resume?key=... - Stream resume from MinIO (public, for resume links when using MINIO_RESUME_PROXY_URL)
-router.get('/resume', async (req, res) => {
-  const key = (req.query.key || '').trim();
-  if (!key || !key.startsWith('resumes/')) {
-    return res.status(400).json({ success: false, error: 'Invalid or missing key.' });
-  }
-  if (!isMinioConfigured()) {
-    return res.status(503).json({ success: false, error: 'Resume storage not configured.' });
-  }
-  const bucket = (process.env.MINIO_BUCKET || 'careers-resumes').toLowerCase();
-  let result;
-  try {
-    result = await getResumeStream(bucket, key);
-  } catch (err) {
-    logger.error('Resume proxy error', { key, error: err.message });
-    return res.status(500).json({ success: false, error: 'Failed to load resume.' });
-  }
-  if (!result) {
-    return res.status(404).json({ success: false, error: 'Resume not found.' });
-  }
-  const filename = path.basename(key);
-  res.set('Content-Type', result.contentType);
-  res.set('Content-Disposition', `inline; filename="${filename.replace(/"/g, '\\"')}"`);
-  if (result.contentLength != null && result.contentLength > 0) {
-    res.set('Content-Length', String(result.contentLength));
-  }
-  const stream = result.stream;
-  res.on('close', () => {
-    if (stream && !stream.destroyed) stream.destroy();
-  });
-  stream.on('error', (err) => {
-    logger.warn('Resume stream error', { key, error: err.message });
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, error: 'Failed to stream resume.' });
-    } else if (!res.writableEnded) {
-      res.end();
-    }
-  });
-  stream.pipe(res);
 });
 
 // POST /api/v1/applications - Submit a new application
