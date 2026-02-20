@@ -217,8 +217,15 @@ router.post('/upload-resume', protect, (req, res, next) => {
       data: { url: fileUrl, filename: req.file.filename }
     });
   } catch (error) {
-    logger.error('Resume upload error:', error);
-    res.status(500).json({ success: false, error: error.message || 'Failed to process upload.' });
+    const code = error.code || error.statusCode;
+    const message = error.message || 'Failed to process upload.';
+    logger.error('Resume upload error:', { code, message, stack: error.stack });
+    const bodyMsg = (error.body && (error.body.Message || error.body.message)) || (error.response && error.response.body && (error.response.body.Message || error.response.body.message));
+    const clientMessage =
+      code === 'BadRequest' || code === 400
+        ? (bodyMsg || message || 'Storage rejected the upload. Check bucket name and permissions.')
+        : message;
+    res.status(500).json({ success: false, error: clientMessage });
   }
 });
 

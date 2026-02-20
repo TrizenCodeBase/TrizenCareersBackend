@@ -113,10 +113,11 @@ async function ensureBucketExists(bucket) {
         ) {
           return true;
         }
-        logger.warn('MinIO bucket create failed', { bucket, error: createErr.message });
+        logger.warn('MinIO bucket create failed', { bucket, error: createErr.message, code: createErr.code });
         throw createErr;
       }
     }
+    logger.warn('MinIO headBucket failed', { bucket, code, message: headErr.message });
     throw headErr;
   }
 }
@@ -157,7 +158,8 @@ export async function uploadResume(buffer, objectName, contentType) {
     throw new Error('Invalid file buffer: buffer is required for upload.');
   }
 
-  const bucket = process.env.MINIO_BUCKET || DEFAULT_BUCKET;
+  // MinIO requires lowercase bucket names
+  const bucket = (process.env.MINIO_BUCKET || DEFAULT_BUCKET).toLowerCase();
   const s3 = getS3Client();
 
   if (!s3) {
@@ -173,7 +175,22 @@ export async function uploadResume(buffer, objectName, contentType) {
     ContentType: contentType,
   };
 
-  await s3.upload(params).promise();
+  try {
+    await s3.putObject(params).promise();
+  } catch (putErr) {
+    const msg = putErr.message || '';
+    const code = putErr.code || putErr.statusCode;
+    const body = putErr.body || putErr.response?.body;
+    logger.error('MinIO putObject failed', {
+      code,
+      message: msg,
+      bucket,
+      key: objectName,
+      body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+    });
+    throw putErr;
+  }
+
   logger.info('Resume uploaded to MinIO', { bucket, objectName });
 
   const url = getObjectUrl(bucket, objectName);
