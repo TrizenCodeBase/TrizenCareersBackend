@@ -30,7 +30,8 @@ let s3Client = null;
 
 /**
  * Build S3 endpoint string from MINIO_ENDPOINT.
- * MINIO_API_PORT: when set, use it when the URL has no port (so we hit MinIO API on 9000, not Console on 443).
+ * When the URL has no port, default to 9000 (MinIO API). 443 is usually the Console and returns "S3 API Requests must be made to API port."
+ * Set MINIO_API_PORT to override (e.g. 9000). Set MINIO_ENDPOINT to include port (e.g. https://host:9000) to skip default.
  */
 function buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
   let protocol = useSSL ? 'https' : 'http';
@@ -46,10 +47,8 @@ function buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
         protocol = url.protocol.replace(':', '') || protocol;
         if (url.port) {
           port = url.port;
-        } else if (apiPort !== undefined && apiPort !== null && apiPort !== '') {
-          port = String(apiPort).trim();
         } else {
-          port = '';
+          port = (apiPort !== undefined && apiPort !== null && apiPort !== '') ? String(apiPort).trim() : '9000';
         }
       } else {
         host = raw;
