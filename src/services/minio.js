@@ -2,7 +2,7 @@
  * MinIO service for resume file storage.
  *
  * Environment variables:
- *   MINIO_ENDPOINT   - MinIO server hostname (e.g. localhost or minio.example.com)
+ *   MINIO_ENDPOINT   - MinIO server hostname or URL (e.g. minio.example.com or https://minio.example.com; protocol is stripped)
  *   MINIO_PORT       - Port (default: 9000)
  *   MINIO_USE_SSL    - 'true' or 'false' (default: false)
  *   MINIO_ACCESS_KEY - Access key
@@ -18,20 +18,29 @@ import { logger } from '../utils/logger.js';
 
 let client = null;
 
+function normalizeEndpoint(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  const s = raw.trim();
+  const match = s.match(/^(?:https?:\/\/)?([^/:#]+)(?::(\d+))?/);
+  const host = match ? match[1] : s.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+  return host;
+}
+
 function getClient() {
   if (client) return client;
-  const endpoint = process.env.MINIO_ENDPOINT;
+  const rawEndpoint = process.env.MINIO_ENDPOINT;
+  const endPoint = normalizeEndpoint(rawEndpoint);
   const port = parseInt(process.env.MINIO_PORT || '9000', 10);
-  const useSSL = process.env.MINIO_USE_SSL === 'true';
+  const useSSL = process.env.MINIO_USE_SSL === 'true' || (rawEndpoint && rawEndpoint.trim().toLowerCase().startsWith('https://'));
   const accessKey = process.env.MINIO_ACCESS_KEY;
   const secretKey = process.env.MINIO_SECRET_KEY;
 
-  if (!endpoint || !accessKey || !secretKey) {
+  if (!endPoint || !accessKey || !secretKey) {
     return null;
   }
 
   client = new Minio.Client({
-    endPoint: endpoint,
+    endPoint,
     port,
     useSSL,
     accessKey,
@@ -66,6 +75,10 @@ async function ensureBucket(minioClient, bucket) {
  * @returns {Promise<{ url: string, key: string }>}
  */
 export async function uploadResume(buffer, objectName, contentType) {
+  if (!buffer || typeof buffer.length !== 'number') {
+    throw new Error('Invalid file buffer: buffer is required for MinIO upload.');
+  }
+
   const bucket = process.env.MINIO_BUCKET || DEFAULT_BUCKET;
   const minioClient = getClient();
 
@@ -87,12 +100,13 @@ export async function uploadResume(buffer, objectName, contentType) {
   if (publicBase) {
     url = publicBase.replace(/\/$/, '') + '/' + objectName;
   } else {
-    const endpoint = process.env.MINIO_ENDPOINT;
+    const host = normalizeEndpoint(process.env.MINIO_ENDPOINT);
     const port = process.env.MINIO_PORT || '9000';
-    const useSSL = process.env.MINIO_USE_SSL === 'true';
+    const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
+    const useSSL = process.env.MINIO_USE_SSL === 'true' || rawEndpoint.toLowerCase().startsWith('https://');
     const protocol = useSSL ? 'https' : 'http';
     const portPart = (useSSL && port === '443') || (!useSSL && port === '80') ? '' : `:${port}`;
-    url = `${protocol}://${endpoint}${portPart}/${bucket}/${objectName}`;
+    url = `${protocol}://${host}${portPart}/${bucket}/${objectName}`;
   }
 
   return { url, key: objectName };

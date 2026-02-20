@@ -190,7 +190,8 @@ router.post('/upload-resume', protect, (req, res, next) => {
       return res.status(400).json({ success: false, error: 'No resume file uploaded.' });
     }
 
-    if (isMinioConfigured()) {
+    // MinIO path: use only when configured AND we have a buffer (memory storage)
+    if (isMinioConfigured() && req.file.buffer && typeof req.file.buffer.length === 'number') {
       const objectName = makeResumeObjectName(req.file.originalname);
       const { url } = await uploadResumeToMinio(req.file.buffer, objectName, req.file.mimetype);
       logger.info('Resume uploaded to MinIO:', { objectName, user: req.user?._id });
@@ -200,8 +201,13 @@ router.post('/upload-resume', protect, (req, res, next) => {
       });
     }
 
+    // Disk path: req.file.filename is set by disk storage
     if (!req.file.filename) {
-      return res.status(400).json({ success: false, error: 'No resume file uploaded.' });
+      logger.error('Resume upload: MinIO configured but file buffer missing. Restart server with MinIO env vars set so memory storage is used.');
+      return res.status(500).json({
+        success: false,
+        error: 'Server upload configuration error. Please try again or contact support.'
+      });
     }
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const fileUrl = `${baseUrl}/uploads/resumes/${req.file.filename}`;
