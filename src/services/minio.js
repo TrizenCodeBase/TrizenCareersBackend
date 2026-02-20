@@ -172,7 +172,7 @@ export function rewriteResumeLinkForProxy(url) {
 }
 
 /**
- * Stream a resume from MinIO (for backend proxy route). Returns { stream, contentType } or null.
+ * Stream a resume from MinIO (for backend proxy route). Returns { stream, contentType, contentLength } or null.
  */
 export async function getResumeStream(bucket, key) {
   const s3 = getS3Client();
@@ -180,8 +180,9 @@ export async function getResumeStream(bucket, key) {
   try {
     const head = await s3.headObject({ Bucket: bucket, Key: key }).promise();
     const contentType = head.ContentType || 'application/octet-stream';
+    const contentLength = head.ContentLength;
     const stream = s3.getObject({ Bucket: bucket, Key: key }).createReadStream();
-    return { stream, contentType };
+    return { stream, contentType, contentLength };
   } catch (err) {
     logger.warn('MinIO getResumeStream failed', { bucket, key, error: err.message });
     return null;

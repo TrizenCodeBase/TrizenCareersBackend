@@ -247,23 +247,35 @@ router.get('/resume', async (req, res) => {
     return res.status(503).json({ success: false, error: 'Resume storage not configured.' });
   }
   const bucket = (process.env.MINIO_BUCKET || 'careers-resumes').toLowerCase();
+  let result;
   try {
-    const result = await getResumeStream(bucket, key);
-    if (!result) {
-      return res.status(404).json({ success: false, error: 'Resume not found.' });
-    }
-    const filename = path.basename(key);
-    res.set('Content-Type', result.contentType);
-    res.set('Content-Disposition', `inline; filename="${filename.replace(/"/g, '\\"')}"`);
-    result.stream.pipe(res);
-    result.stream.on('error', (err) => {
-      logger.warn('Resume stream error', { key, error: err.message });
-      if (!res.headersSent) res.status(500).json({ success: false, error: 'Failed to stream resume.' });
-    });
+    result = await getResumeStream(bucket, key);
   } catch (err) {
     logger.error('Resume proxy error', { key, error: err.message });
-    res.status(500).json({ success: false, error: 'Failed to load resume.' });
+    return res.status(500).json({ success: false, error: 'Failed to load resume.' });
   }
+  if (!result) {
+    return res.status(404).json({ success: false, error: 'Resume not found.' });
+  }
+  const filename = path.basename(key);
+  res.set('Content-Type', result.contentType);
+  res.set('Content-Disposition', `inline; filename="${filename.replace(/"/g, '\\"')}"`);
+  if (result.contentLength != null && result.contentLength > 0) {
+    res.set('Content-Length', String(result.contentLength));
+  }
+  const stream = result.stream;
+  res.on('close', () => {
+    if (stream && !stream.destroyed) stream.destroy();
+  });
+  stream.on('error', (err) => {
+    logger.warn('Resume stream error', { key, error: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: 'Failed to stream resume.' });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
+  });
+  stream.pipe(res);
 });
 
 // POST /api/v1/applications - Submit a new application
