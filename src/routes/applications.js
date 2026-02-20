@@ -8,7 +8,7 @@ import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
 import { fileURLToPath } from 'url';
-import { isMinioConfigured, uploadResume as uploadResumeToMinio, getResumeObjectUrl, extractKeyFromResumeLink } from '../services/minio.js';
+import { isMinioConfigured, uploadResume as uploadResumeToMinio, getResumeObjectUrl, extractKeyFromResumeLink, getResumeStream } from '../services/minio.js';
 
 const RESUME_BUCKET = (process.env.MINIO_BUCKET || 'careers-resumes').toLowerCase();
 
@@ -242,6 +242,43 @@ router.post('/upload-resume', protect, (req, res, next) => {
         : message;
     res.status(500).json({ success: false, error: clientMessage });
   }
+});
+
+// GET /api/v1/applications/resume?key=... - Stream resume from MinIO (avoids redirect/CORS when opening presigned URL in browser)
+router.get('/resume', async (req, res) => {
+  const key = (req.query.key || '').trim();
+  if (!key || !key.startsWith('resumes/')) {
+    return res.status(400).json({ success: false, error: 'Invalid or missing key.' });
+  }
+  if (!isMinioConfigured()) {
+    return res.status(503).json({ success: false, error: 'Resume storage not configured.' });
+  }
+  let result;
+  try {
+    result = await getResumeStream(RESUME_BUCKET, key);
+  } catch (err) {
+    logger.error('Resume proxy error', { key, error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to load resume.' });
+  }
+  if (!result) {
+    return res.status(404).json({ success: false, error: 'Resume not found.' });
+  }
+  const filename = path.basename(key);
+  res.set('Content-Type', result.contentType);
+  res.set('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '\\"')}"`);
+  if (result.contentLength != null && result.contentLength > 0) {
+    res.set('Content-Length', String(result.contentLength));
+  }
+  const stream = result.stream;
+  res.on('close', () => {
+    if (stream && !stream.destroyed) stream.destroy();
+  });
+  stream.on('error', (err) => {
+    logger.warn('Resume stream error', { key, error: err.message });
+    if (!res.headersSent) res.status(500).json({ success: false, error: 'Failed to stream resume.' });
+    else if (!res.writableEnded) res.end();
+  });
+  stream.pipe(res);
 });
 
 // POST /api/v1/applications - Submit a new application

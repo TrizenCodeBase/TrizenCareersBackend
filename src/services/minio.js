@@ -215,6 +215,24 @@ export function extractKeyFromResumeLink(url) {
 }
 
 /**
+ * Stream a resume from MinIO for the backend proxy route. Returns { stream, contentType, contentLength } or null.
+ */
+export async function getResumeStream(bucket, key) {
+  const s3 = getS3Client();
+  if (!s3) return null;
+  try {
+    const head = await s3.headObject({ Bucket: bucket, Key: key }).promise();
+    const contentType = head.ContentType || 'application/octet-stream';
+    const contentLength = head.ContentLength;
+    const stream = s3.getObject({ Bucket: bucket, Key: key }).createReadStream();
+    return { stream, contentType, contentLength };
+  } catch (err) {
+    logger.warn('MinIO getResumeStream failed', { bucket, key, error: err.message });
+    return null;
+  }
+}
+
+/**
  * Upload resume buffer to MinIO (S3-compatible) and return the URL and key.
  */
 export async function uploadResume(buffer, objectName, contentType) {
