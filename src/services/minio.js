@@ -181,7 +181,12 @@ export async function uploadResume(buffer, objectName, contentType) {
     const code = putErr.code || putErr.statusCode;
     const msg = putErr.message || '';
 
-    if (code === 'NotFound' || code === 404 || (msg && (msg.includes('NoSuchBucket') || msg.includes('no such bucket')))) {
+    const bucketMissing =
+      code === 'NoSuchBucket' ||
+      code === 'NotFound' ||
+      code === 404 ||
+      (msg && (msg.includes('NoSuchBucket') || msg.includes('no such bucket') || msg.includes('does not exist')));
+    if (bucketMissing) {
       try {
         await createBucketIfNeeded(bucket);
         await s3.putObject(params).promise();
