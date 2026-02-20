@@ -1,12 +1,14 @@
 /**
  * MinIO / S3-compatible storage for resume uploads.
  *
- * Uses AWS SDK S3 client (MinIO is S3-compatible). Endpoint is a single URL;
- * if the URL has no explicit port, port 9000 is not forced (avoids hitting
- * wrong port when served via 443/80).
+ * IMPORTANT: MinIO has two ports — API (9000) for S3 operations, Console (9001) for web UI.
+ * "S3 API Requests must be made to API port" means you are hitting the Console. Set
+ * MINIO_ENDPOINT to the API URL (e.g. https://host:9000) or use MINIO_API_PORT=9000 with
+ * your host URL so the client uses port 9000.
  *
  * Environment variables:
- *   MINIO_ENDPOINT   - Full URL (e.g. https://minio.example.com or https://host:9000)
+ *   MINIO_ENDPOINT   - Full URL to MinIO API (e.g. https://host:9000). Must be the API, not the Console.
+ *   MINIO_API_PORT   - Optional. If set (e.g. 9000), use this port when MINIO_ENDPOINT has no port.
  *   MINIO_ACCESS_KEY or MINIO_ROOT_USER
  *   MINIO_SECRET_KEY or MINIO_ROOT_PASSWORD
  *   MINIO_BUCKET     - Bucket name (default: careers-resumes)
@@ -28,10 +30,9 @@ let s3Client = null;
 
 /**
  * Build S3 endpoint string from MINIO_ENDPOINT.
- * When the URL has no explicit port (e.g. https://host), do NOT add port 9000 — use default 443/80.
- * MINIO_PORT is only used when endpoint is a plain hostname without a scheme.
+ * MINIO_API_PORT: when set, use it when the URL has no port (so we hit MinIO API on 9000, not Console on 443).
  */
-function buildEndpoint(rawEndpoint, rawPort, useSSL) {
+function buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
   let protocol = useSSL ? 'https' : 'http';
   let host = 'localhost';
   let port = rawPort || '9000';
@@ -43,11 +44,16 @@ function buildEndpoint(rawEndpoint, rawPort, useSSL) {
         const url = new URL(raw);
         host = url.hostname || host;
         protocol = url.protocol.replace(':', '') || protocol;
-        // Use URL port only; if empty (default 443/80), leave port empty — do not use MINIO_PORT
-        port = url.port || '';
+        if (url.port) {
+          port = url.port;
+        } else if (apiPort !== undefined && apiPort !== null && apiPort !== '') {
+          port = String(apiPort).trim();
+        } else {
+          port = '';
+        }
       } else {
         host = raw;
-        port = rawPort || '9000';
+        port = rawPort || (apiPort !== undefined && apiPort !== null && apiPort !== '' ? String(apiPort).trim() : '9000');
       }
     } catch (e) {
       logger.warn('Could not parse MINIO_ENDPOINT, using defaults', { rawEndpoint: raw, error: e.message });
@@ -62,9 +68,10 @@ function getS3Client() {
 
   const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
   const rawPort = process.env.MINIO_PORT || '';
+  const apiPort = process.env.MINIO_API_PORT || '';
   const useSSL = (process.env.MINIO_USE_SSL || '').toLowerCase() === 'true';
 
-  const endpoint = buildEndpoint(rawEndpoint, rawPort, useSSL);
+  const endpoint = buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL);
   const accessKeyId = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || '';
   const secretAccessKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || '';
   const region = process.env.MINIO_REGION || process.env.MINIO_REGION_NAME || DEFAULT_REGION;
@@ -137,8 +144,9 @@ function getObjectUrl(bucket, key) {
     logger.warn('Could not generate presigned URL', { error: err.message });
     const rawEndpoint = (process.env.MINIO_ENDPOINT || '').trim();
     const rawPort = process.env.MINIO_PORT || '';
+    const apiPort = process.env.MINIO_API_PORT || '';
     const useSSL = (process.env.MINIO_USE_SSL || '').toLowerCase() === 'true';
-    const endpoint = buildEndpoint(rawEndpoint, rawPort, useSSL);
+    const endpoint = buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL);
     return `${endpoint}/${bucket}/${key}`;
   }
 }
