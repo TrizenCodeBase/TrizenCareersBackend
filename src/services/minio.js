@@ -27,7 +27,9 @@ const PRESIGNED_EXPIRY_SECONDS = 31536000; // 1 year
 let s3Client = null;
 
 /**
- * Build S3 endpoint string from MINIO_ENDPOINT. Do not force port 9000 when URL has no port.
+ * Build S3 endpoint string from MINIO_ENDPOINT.
+ * When the URL has no explicit port (e.g. https://host), do NOT add port 9000 — use default 443/80.
+ * MINIO_PORT is only used when endpoint is a plain hostname without a scheme.
  */
 function buildEndpoint(rawEndpoint, rawPort, useSSL) {
   let protocol = useSSL ? 'https' : 'http';
@@ -40,10 +42,12 @@ function buildEndpoint(rawEndpoint, rawPort, useSSL) {
       if (raw.includes('://')) {
         const url = new URL(raw);
         host = url.hostname || host;
-        port = url.port || rawPort || '';
         protocol = url.protocol.replace(':', '') || protocol;
+        // Use URL port only; if empty (default 443/80), leave port empty — do not use MINIO_PORT
+        port = url.port || '';
       } else {
         host = raw;
+        port = rawPort || '9000';
       }
     } catch (e) {
       logger.warn('Could not parse MINIO_ENDPOINT, using defaults', { rawEndpoint: raw, error: e.message });
