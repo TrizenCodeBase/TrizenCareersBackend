@@ -89,6 +89,12 @@ const aimlApplicationSchema = new mongoose.Schema({
     required: [true, 'Degree discipline is required'],
     trim: true
   },
+  yearOfPassingOut: {
+    type: String,
+    required: [true, 'Year of passing out is required'],
+    enum: ['2024', '2025', '2026'],
+    trim: true
+  },
   researchPapers: {
     type: String,
     required: [true, 'Research papers information is required'],
@@ -141,7 +147,13 @@ const mernApplicationSchema = new mongoose.Schema({
   },
   researchPapers: {
     type: String,
-    required: [true, 'Research papers information is required'],
+    required: false,
+    trim: true
+  },
+  yearOfPassingOut: {
+    type: String,
+    required: [true, 'Year of passing out is required'],
+    enum: ['2024', '2025', '2026'],
     trim: true
   },
   internshipExperience: {
@@ -233,6 +245,7 @@ const socialMediaApplicationSchema = new mongoose.Schema({
 const COLLECTION_MAPPING = {
   'TV-AIML-INT-2025-001': 'aiml_applications',
   'TV-WEB-MERN-2025-005': 'mern_applications',
+  'TV-WEB-MERN-2025-002': 'mern_applications',
   'TV-MKT-SMM-2025-003': 'social_media_applications'
 };
 
@@ -240,6 +253,7 @@ const COLLECTION_MAPPING = {
 const SCHEMA_MAPPING = {
   'TV-AIML-INT-2025-001': aimlApplicationSchema,
   'TV-WEB-MERN-2025-005': mernApplicationSchema,
+  'TV-WEB-MERN-2025-002': mernApplicationSchema,
   'TV-MKT-SMM-2025-003': socialMediaApplicationSchema
 };
 

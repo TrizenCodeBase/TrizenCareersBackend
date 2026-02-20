@@ -1,4 +1,6 @@
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -10,6 +12,9 @@ import userRoutes from './routes/users.js';
 import applicationRoutes from './routes/applications.js';
 import { logger } from './utils/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -46,38 +51,47 @@ app.use(helmet({
 }));
 
 // CORS configuration
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-  : [
-      'http://localhost:3000', 
-      'http://localhost:3001',  // Careers Admin Frontend
-      'http://localhost:3002',  // Careers Admin Frontend
-      'http://localhost:5173',  // Vite default port
-      'http://localhost:5174',  // Vite alternative port
-      'http://localhost:8080', 
-      'https://careers.trizenventures.com',
-      'https://careersadminfrontend.llp.trizenventures.com'
-    ];
+const defaultOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',  // Careers Admin Frontend
+  'http://localhost:3002',
+  'http://localhost:3003',
+  'http://localhost:5173',  // Vite default port
+  'http://localhost:5174',
+  'http://localhost:8080',
+  'http://192.168.1.8:3001', // LAN access (e.g. Careers Admin from another device)
+  'https://careers.trizenventures.com',
+  'https://careersadminfrontend.llp.trizenventures.com'
+];
 
-logger.info('Allowed CORS origins:', allowedOrigins);
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? [...process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim()), ...defaultOrigins]
+  : defaultOrigins;
+
+// Remove duplicates
+const uniqueOrigins = [...new Set(allowedOrigins)];
+
+// In development, allow any origin from private IP ranges (192.168.x.x, 10.x.x.x)
+const isDev = process.env.NODE_ENV !== 'production';
+const lanOriginRegex = /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$/;
+
+logger.info('Allowed CORS origins:', uniqueOrigins);
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
       logger.info('CORS: Allowing request with no origin');
       return callback(null, true);
     }
-    
-    // Check if origin is in allowed list
-    if (allowedOrigins.includes(origin)) {
-      logger.info(`CORS: Allowing request from origin: ${origin}`);
-      callback(null, true);
-    } else {
-      logger.warn(`CORS: Blocked origin: ${origin}`);
-      logger.warn(`CORS: Allowed origins are: ${allowedOrigins.join(', ')}`);
-      callback(new Error('Not allowed by CORS'));
+    if (uniqueOrigins.includes(origin)) {
+      return callback(null, true);
     }
+    if (isDev && lanOriginRegex.test(origin)) {
+      return callback(null, true);
+    }
+    logger.warn(`CORS: Blocked origin: ${origin}`);
+    logger.warn(`CORS: Allowed origins are: ${uniqueOrigins.join(', ')}`);
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -114,6 +128,9 @@ app.use(morgan('combined', {
 
 // Compression middleware
 app.use(compression());
+
+// Serve uploaded resume files (public read for application review)
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // API Routes
 app.use('/api/v1/users', userRoutes);

@@ -1,11 +1,55 @@
 import express from 'express';
+import path from 'path';
+import fs from 'fs';
+import multer from 'multer';
 import { body, validationResult } from 'express-validator';
 import { getApplicationModel, isSupportedJobId, getAllApplicationModels } from '../models/ApplicationFactory.js';
 import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
+import { fileURLToPath } from 'url';
+import { isMinioConfigured, uploadResume as uploadResumeToMinio } from '../services/minio.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = express.Router();
+
+// Ensure uploads directory exists (used when MinIO is not configured)
+const uploadsDir = path.join(__dirname, '../../uploads/resumes');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  logger.info('Created uploads/resumes directory');
+}
+
+const ALLOWED_MIMES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+function makeResumeObjectName(originalName) {
+  const ext = path.extname(originalName) || '.pdf';
+  const base = path.basename(originalName, ext).replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '');
+  return `resumes/${Date.now()}-${base}${ext}`;
+}
+
+const resumeDiskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  filename: (_req, file, cb) => cb(null, path.basename(makeResumeObjectName(file.originalname)))
+});
+
+const resumeMemoryStorage = multer.memoryStorage();
+
+const storage = isMinioConfigured() ? resumeMemoryStorage : resumeDiskStorage;
+
+const uploadResume = multer({
+  storage,
+  limits: { fileSize: MAX_FILE_SIZE },
+  fileFilter: (_req, file, cb) => {
+    if (!ALLOWED_MIMES.includes(file.mimetype)) {
+      return cb(new Error('Invalid file type. Allowed: PDF, DOC, DOCX.'), false);
+    }
+    cb(null, true);
+  }
+});
 
 // Base validation middleware
 const validateApplication = [
@@ -71,17 +115,24 @@ const validateApplicationConditional = (req, res, next) => {
       }
     }
   } else {
-    // Original validation for other jobs (AIML, MERN, etc.)
-    const requiredFields = [
-      'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
-      'researchPapers', 'internshipExperience', 'duration', 'aiMlProjects', 
-      'preferredStartDate', 'expectedStipend'
-    ];
-    
-    const missingFields = requiredFields.filter(field => 
-      !req.body[field] || req.body[field].trim() === ''
+    // AIML: requires researchPapers + yearOfPassingOut; MERN: requires yearOfPassingOut only (no researchPapers)
+    const isMernJobId = jobId === 'TV-WEB-MERN-2025-005' || jobId === 'TV-WEB-MERN-2025-002';
+    const requiredFields = isMernJobId
+      ? [
+          'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
+          'yearOfPassingOut', 'internshipExperience', 'duration', 'aiMlProjects',
+          'preferredStartDate', 'expectedStipend'
+        ]
+      : [
+          'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
+          'yearOfPassingOut', 'researchPapers', 'internshipExperience', 'duration', 'aiMlProjects',
+          'preferredStartDate', 'expectedStipend'
+        ];
+
+    const missingFields = requiredFields.filter(field =>
+      !req.body[field] || (typeof req.body[field] === 'string' && req.body[field].trim() === '')
     );
-    
+
     if (missingFields.length > 0) {
       return res.status(400).json({
         success: false,
@@ -92,7 +143,16 @@ const validateApplicationConditional = (req, res, next) => {
         }))
       });
     }
-    
+
+    // Validate yearOfPassingOut for both AIML and MERN
+    if (!['2024', '2025', '2026'].includes((req.body.yearOfPassingOut || '').trim())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: [{ field: 'yearOfPassingOut', message: 'Year of passing out must be 2024, 2025, or 2026' }]
+      });
+    }
+
     // Validate URLs
     const urlFields = ['portfolioUrl', 'resumeLink'];
     for (const field of urlFields) {
@@ -109,6 +169,52 @@ const validateApplicationConditional = (req, res, next) => {
   
   next();
 };
+
+// POST /api/v1/applications/upload-resume - Upload resume file (protected)
+router.post('/upload-resume', protect, (req, res, next) => {
+  uploadResume.single('resume')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ success: false, error: 'Resume file must be 5MB or smaller.' });
+      }
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    if (err) {
+      return res.status(400).json({ success: false, error: err.message || 'Invalid file.' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No resume file uploaded.' });
+    }
+
+    if (isMinioConfigured()) {
+      const objectName = makeResumeObjectName(req.file.originalname);
+      const { url } = await uploadResumeToMinio(req.file.buffer, objectName, req.file.mimetype);
+      logger.info('Resume uploaded to MinIO:', { objectName, user: req.user?._id });
+      return res.status(200).json({
+        success: true,
+        data: { url, filename: path.basename(objectName) }
+      });
+    }
+
+    if (!req.file.filename) {
+      return res.status(400).json({ success: false, error: 'No resume file uploaded.' });
+    }
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const fileUrl = `${baseUrl}/uploads/resumes/${req.file.filename}`;
+    logger.info('Resume uploaded (disk):', { filename: req.file.filename, user: req.user?._id });
+    res.status(200).json({
+      success: true,
+      data: { url: fileUrl, filename: req.file.filename }
+    });
+  } catch (error) {
+    logger.error('Resume upload error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to process upload.' });
+  }
+});
 
 // POST /api/v1/applications - Submit a new application
 router.post('/', protect, validateApplication, validateApplicationConditional, async (req, res) => {
@@ -668,7 +774,7 @@ router.get('/stats/overview', protect, async (req, res) => {
     }
 
     res.json({
-      success: true,
+      success: true,  
       data: {
         totalApplications,
         recentApplications,
