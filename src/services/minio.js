@@ -193,6 +193,21 @@ export async function uploadResume(buffer, objectName, contentType) {
         });
         throw retryErr;
       }
+    } else if (code === 'XMLParserError') {
+      // MinIO sometimes returns XML the AWS SDK v2 parser rejects. Upload may have succeeded.
+      try {
+        await s3.headObject({ Bucket: bucket, Key: objectName }).promise();
+        logger.info('Resume uploaded to MinIO (verified after XML parse error)', { bucket, objectName });
+        const url = getObjectUrl(bucket, objectName);
+        return { url, key: objectName };
+      } catch (headErr) {
+        logger.error('MinIO putObject returned unparseable response; object not found on verify', {
+          bucket,
+          key: objectName,
+          putErr: msg,
+        });
+        throw new Error('Upload may have failed due to storage response format. Please try again.');
+      }
     } else {
       logger.error('MinIO putObject failed', {
         code,
