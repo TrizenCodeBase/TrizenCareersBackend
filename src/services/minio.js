@@ -1,14 +1,14 @@
 /**
  * MinIO / S3-compatible storage for resume uploads.
  *
- * IMPORTANT: MinIO has two ports — API (9000) for S3 operations, Console (9001) for web UI.
- * "S3 API Requests must be made to API port" means you are hitting the Console. Set
- * MINIO_ENDPOINT to the API URL (e.g. https://host:9000) or use MINIO_API_PORT=9000 with
- * your host URL so the client uses port 9000.
+ * The backend connects to whatever S3-compatible endpoint you set in MINIO_* env vars
+ * and stores resume files there. No hardcoded hosts or app names — fully env-driven.
+ *
+ * MinIO has two ports: API (9000) for S3, Console (9001) for web UI. Use the API endpoint.
  *
  * Environment variables:
- *   MINIO_ENDPOINT   - Full URL to MinIO API (e.g. https://host:9000). Must be the API, not the Console.
- *   MINIO_API_PORT   - Optional. If set (e.g. 9000), use this port when MINIO_ENDPOINT has no port.
+ *   MINIO_ENDPOINT   - Full URL to S3/MinIO API (e.g. http://srv-captain--trizencareer:9000 or https://host:9000).
+ *   MINIO_API_PORT   - Optional. Used when MINIO_ENDPOINT has no port (default 9000).
  *   MINIO_ACCESS_KEY or MINIO_ROOT_USER
  *   MINIO_SECRET_KEY or MINIO_ROOT_PASSWORD
  *   MINIO_BUCKET     - Bucket name (default: careers-resumes)
@@ -78,6 +78,8 @@ function getS3Client() {
   if (!accessKeyId || !secretAccessKey) {
     return null;
   }
+
+  logger.info('MinIO/S3 storage configured', { endpoint, bucket: (process.env.MINIO_BUCKET || DEFAULT_BUCKET).toLowerCase() });
 
   s3Client = new AWS.S3({
     endpoint,
