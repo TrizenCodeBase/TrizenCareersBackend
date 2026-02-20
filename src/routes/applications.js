@@ -8,7 +8,15 @@ import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
 import { fileURLToPath } from 'url';
-import { isMinioConfigured, uploadResume as uploadResumeToMinio } from '../services/minio.js';
+import { isMinioConfigured, uploadResume as uploadResumeToMinio, getResumeStream, rewriteResumeLinkForProxy } from '../services/minio.js';
+
+function rewriteResumeLinks(appOrList) {
+  const rewrite = (doc) => {
+    if (doc && doc.resumeLink) doc.resumeLink = rewriteResumeLinkForProxy(doc.resumeLink);
+    return doc;
+  };
+  return Array.isArray(appOrList) ? appOrList.map(rewrite) : rewrite(appOrList);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -229,6 +237,35 @@ router.post('/upload-resume', protect, (req, res, next) => {
   }
 });
 
+// GET /api/v1/applications/resume?key=... - Stream resume from MinIO (public, for resume links when using MINIO_RESUME_PROXY_URL)
+router.get('/resume', async (req, res) => {
+  const key = (req.query.key || '').trim();
+  if (!key || !key.startsWith('resumes/')) {
+    return res.status(400).json({ success: false, error: 'Invalid or missing key.' });
+  }
+  if (!isMinioConfigured()) {
+    return res.status(503).json({ success: false, error: 'Resume storage not configured.' });
+  }
+  const bucket = (process.env.MINIO_BUCKET || 'careers-resumes').toLowerCase();
+  try {
+    const result = await getResumeStream(bucket, key);
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Resume not found.' });
+    }
+    const filename = path.basename(key);
+    res.set('Content-Type', result.contentType);
+    res.set('Content-Disposition', `inline; filename="${filename.replace(/"/g, '\\"')}"`);
+    result.stream.pipe(res);
+    result.stream.on('error', (err) => {
+      logger.warn('Resume stream error', { key, error: err.message });
+      if (!res.headersSent) res.status(500).json({ success: false, error: 'Failed to stream resume.' });
+    });
+  } catch (err) {
+    logger.error('Resume proxy error', { key, error: err.message });
+    res.status(500).json({ success: false, error: 'Failed to load resume.' });
+  }
+});
+
 // POST /api/v1/applications - Submit a new application
 router.post('/', protect, validateApplication, validateApplicationConditional, async (req, res) => {
   try {
@@ -382,7 +419,7 @@ router.get('/', async (req, res) => {
 
       return res.json({
         success: true,
-        data: applicationsWithJobId,
+        data: rewriteResumeLinks(applicationsWithJobId),
         pagination: {
           currentPage: page,
           totalPages: Math.ceil(total / limit),
@@ -435,7 +472,7 @@ router.get('/', async (req, res) => {
 
       return res.json({
         success: true,
-        data: paginatedApplications,
+        data: rewriteResumeLinks(paginatedApplications),
         pagination: {
           currentPage: page,
           totalPages: Math.ceil(totalApplications / limit),
@@ -479,7 +516,7 @@ router.get('/my', protect, async (req, res) => {
 
     res.json({
       success: true,
-      data: applications,
+      data: rewriteResumeLinks(applications),
       pagination: {
         currentPage: page,
         totalPages: Math.ceil(total / limit),
@@ -546,7 +583,7 @@ router.get('/:id', protect, async (req, res) => {
 
     res.json({
       success: true,
-      data: application
+      data: rewriteResumeLinks(application)
     });
   } catch (error) {
     logger.error('Error fetching application:', error);
@@ -715,7 +752,7 @@ router.get('/candidates', protect, async (req, res) => {
 
     res.json({
       success: true,
-      data: applications,
+      data: rewriteResumeLinks(applications),
       statistics: {
         totalCandidates: total,
         statusBreakdown: statusCounts

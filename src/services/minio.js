@@ -13,6 +13,7 @@
  *   MINIO_SECRET_KEY or MINIO_ROOT_PASSWORD
  *   MINIO_BUCKET     - Bucket name (default: careers-resumes)
  *   MINIO_PUBLIC_URL - Optional base URL for resume links (else presigned or endpoint URL)
+ *   MINIO_RESUME_PROXY_URL - If set, resume links use backend proxy (e.g. https://api.example.com/api/v1/applications/resume) so browsers can open them
  *   MINIO_REGION     - Optional (default: us-east-1)
  */
 
@@ -124,9 +125,14 @@ async function createBucketIfNeeded(bucket) {
 }
 
 /**
- * Get URL for an object: MINIO_PUBLIC_URL, or presigned URL, or endpoint-style URL.
+ * Get URL for an object: MINIO_RESUME_PROXY_URL (backend proxy), MINIO_PUBLIC_URL, or presigned/endpoint URL.
+ * Use MINIO_RESUME_PROXY_URL when MinIO is internal (e.g. srv-captain--trizencareer:9000) so resume links work in browsers.
  */
 function getObjectUrl(bucket, key) {
+  const proxyBase = (process.env.MINIO_RESUME_PROXY_URL || '').replace(/\/$/, '');
+  if (proxyBase) {
+    return `${proxyBase}?key=${encodeURIComponent(key)}`;
+  }
   const publicBase = (process.env.MINIO_PUBLIC_URL || '').replace(/\/$/, '');
   if (publicBase) {
     return `${publicBase}/${key}`;
@@ -149,6 +155,36 @@ function getObjectUrl(bucket, key) {
     const useSSL = (process.env.MINIO_USE_SSL || '').toLowerCase() === 'true';
     const endpoint = buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL);
     return `${endpoint}/${bucket}/${key}`;
+  }
+}
+
+/**
+ * If MINIO_RESUME_PROXY_URL is set, rewrite an internal MinIO resume URL to the proxy URL so it works in browsers.
+ */
+export function rewriteResumeLinkForProxy(url) {
+  if (!url || typeof url !== 'string') return url;
+  const proxyBase = (process.env.MINIO_RESUME_PROXY_URL || '').replace(/\/$/, '');
+  if (!proxyBase) return url;
+  const i = url.indexOf('/resumes/');
+  if (i === -1) return url;
+  const key = url.substring(i + 1);
+  return `${proxyBase}?key=${encodeURIComponent(key)}`;
+}
+
+/**
+ * Stream a resume from MinIO (for backend proxy route). Returns { stream, contentType } or null.
+ */
+export async function getResumeStream(bucket, key) {
+  const s3 = getS3Client();
+  if (!s3) return null;
+  try {
+    const head = await s3.headObject({ Bucket: bucket, Key: key }).promise();
+    const contentType = head.ContentType || 'application/octet-stream';
+    const stream = s3.getObject({ Bucket: bucket, Key: key }).createReadStream();
+    return { stream, contentType };
+  } catch (err) {
+    logger.warn('MinIO getResumeStream failed', { bucket, key, error: err.message });
+    return null;
   }
 }
 
@@ -245,4 +281,5 @@ export default {
   getS3Client: getS3Client,
   isMinioConfigured,
   uploadResume,
+  getResumeStream,
 };
