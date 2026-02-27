@@ -2,6 +2,11 @@ import mongoose from 'mongoose';
 
 // Base schema with common fields
 const baseApplicationSchema = new mongoose.Schema({
+  jobId: {
+    type: String,
+    required: [true, 'Job ID is required'],
+    trim: true
+  },
   fullName: {
     type: String,
     required: [true, 'Full name is required'],

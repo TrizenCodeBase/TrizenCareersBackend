@@ -317,9 +317,10 @@ router.post('/', protect, validateApplication, validateApplicationConditional, a
     // Get the appropriate model for this job
     const ApplicationModel = getApplicationModel(jobId);
 
-    // Check if user has already applied for this job
+    // Check if user has already applied for this specific job
     const existingApplication = await ApplicationModel.findOne({
-      appliedBy: req.user._id
+      appliedBy: req.user._id,
+      jobId
     });
 
     if (existingApplication) {
@@ -339,6 +340,7 @@ router.post('/', protect, validateApplication, validateApplicationConditional, a
 
     const application = await ApplicationModel.create({
       ...req.body,
+      jobId,
       appliedBy: req.user._id
     });
 
