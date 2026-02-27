@@ -83,7 +83,7 @@ const validateApplicationConditional = (req, res, next) => {
   const { jobId } = req.body;
   
   // Social Media Management Intern specific validation
-  if (jobId === 'TV-MKT-SMM-2025-003') {
+  if (jobId === 'TV-MKT-SMM-2025-003' || jobId === 'TV-MKT-SMM-2026-003') {
     // Check required fields for Social Media Management Intern
     const requiredFields = [
       'currentQualification', 'collegeUniversity', 'socialMediaPlatforms', 
@@ -131,7 +131,11 @@ const validateApplicationConditional = (req, res, next) => {
     }
   } else {
     // AIML: requires researchPapers + yearOfPassingOut; MERN: requires yearOfPassingOut only (no researchPapers)
-    const isMernJobId = jobId === 'TV-WEB-MERN-2025-005' || jobId === 'TV-WEB-MERN-2025-002';
+    const isMernJobId =
+      jobId === 'TV-WEB-MERN-2025-005' ||
+      jobId === 'TV-WEB-MERN-2025-002' ||
+      jobId === 'TV-WEB-MERN-2026-005' ||
+      jobId === 'TV-WEB-MERN-2026-002';
     const requiredFields = isMernJobId
       ? [
           'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
@@ -963,8 +967,13 @@ router.post('/:id/send-acceptance-email', protect, async (req, res) => {
     const getJobTitle = (jobId) => {
       const jobMap = {
         'TV-AIML-INT-2025-001': 'AIML Intern',
+        'TV-AIML-INT-2026-001': 'AIML Intern',
         'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
+        'TV-WEB-MERN-2025-002': 'MERN Stack Developer Intern',
+        'TV-WEB-MERN-2026-005': 'MERN Stack Developer Intern',
+        'TV-WEB-MERN-2026-002': 'MERN Stack Developer Intern',
         'TV-MKT-SMM-2025-003': 'Social Media Management Intern',
+        'TV-MKT-SMM-2026-003': 'Social Media Management Intern',
       };
       return jobMap[jobId] || jobId;
     };
@@ -1062,8 +1071,13 @@ router.post('/:id/send-rejection-email', protect, async (req, res) => {
     const getJobTitle = (jobId) => {
       const jobMap = {
         'TV-AIML-INT-2025-001': 'AIML Intern',
+        'TV-AIML-INT-2026-001': 'AIML Intern',
         'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
+        'TV-WEB-MERN-2025-002': 'MERN Stack Developer Intern',
+        'TV-WEB-MERN-2026-005': 'MERN Stack Developer Intern',
+        'TV-WEB-MERN-2026-002': 'MERN Stack Developer Intern',
         'TV-MKT-SMM-2025-003': 'Social Media Management Intern',
+        'TV-MKT-SMM-2026-003': 'Social Media Management Intern',
       };
       return jobMap[jobId] || jobId;
     };

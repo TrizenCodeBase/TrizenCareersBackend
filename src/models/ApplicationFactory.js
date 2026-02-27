@@ -244,17 +244,25 @@ const socialMediaApplicationSchema = new mongoose.Schema({
 // Collection mapping
 const COLLECTION_MAPPING = {
   'TV-AIML-INT-2025-001': 'aiml_applications',
+  'TV-AIML-INT-2026-001': 'aiml_applications',
   'TV-WEB-MERN-2025-005': 'mern_applications',
   'TV-WEB-MERN-2025-002': 'mern_applications',
-  'TV-MKT-SMM-2025-003': 'social_media_applications'
+  'TV-WEB-MERN-2026-005': 'mern_applications',
+  'TV-WEB-MERN-2026-002': 'mern_applications',
+  'TV-MKT-SMM-2025-003': 'social_media_applications',
+  'TV-MKT-SMM-2026-003': 'social_media_applications'
 };
 
 // Schema mapping
 const SCHEMA_MAPPING = {
   'TV-AIML-INT-2025-001': aimlApplicationSchema,
+  'TV-AIML-INT-2026-001': aimlApplicationSchema,
   'TV-WEB-MERN-2025-005': mernApplicationSchema,
   'TV-WEB-MERN-2025-002': mernApplicationSchema,
-  'TV-MKT-SMM-2025-003': socialMediaApplicationSchema
+  'TV-WEB-MERN-2026-005': mernApplicationSchema,
+  'TV-WEB-MERN-2026-002': mernApplicationSchema,
+  'TV-MKT-SMM-2025-003': socialMediaApplicationSchema,
+  'TV-MKT-SMM-2026-003': socialMediaApplicationSchema
 };
 
 // Factory function to get the appropriate model
