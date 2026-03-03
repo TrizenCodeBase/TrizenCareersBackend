@@ -410,7 +410,7 @@ router.get('/', async (req, res) => {
     const sortOptions = {};
     sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
-    // If specific jobId is requested, get from that collection only
+    // If specific jobId is requested, get only applications for that jobId
     if (jobId) {
       if (!isSupportedJobId(jobId)) {
         return res.status(400).json({
@@ -419,10 +419,9 @@ router.get('/', async (req, res) => {
         });
       }
 
-      // Note: Don't add jobId to query since documents don't have this field
-      // The collection itself already filters by jobId
       const ApplicationModel = getApplicationModel(jobId);
-      const applications = await ApplicationModel.find(query)
+      const jobQuery = { ...query, jobId };
+      const applications = await ApplicationModel.find(jobQuery)
         .populate('appliedBy', 'username email firstName lastName role')
         .sort(sortOptions)
         .limit(limit * 1)
@@ -430,17 +429,11 @@ router.get('/', async (req, res) => {
         .lean()
         .exec();
 
-      const total = await ApplicationModel.countDocuments(query);
-
-      // Add jobId to each application
-      const applicationsWithJobId = applications.map(app => ({
-        ...app,
-        jobId
-      }));
+      const total = await ApplicationModel.countDocuments(jobQuery);
 
       return res.json({
         success: true,
-        data: rewriteResumeLinks(applicationsWithJobId),
+        data: rewriteResumeLinks(applications),
         pagination: {
           currentPage: page,
           totalPages: Math.ceil(total / limit),
@@ -457,20 +450,13 @@ router.get('/', async (req, res) => {
       let allApplications = [];
       let totalApplications = 0;
 
-      for (const { jobId: modelJobId, model } of allModels) {
+      for (const { model } of allModels) {
         const applications = await model.find(query)
           .populate('appliedBy', 'username email firstName lastName role')
           .sort(sortOptions)
           .lean()
           .exec();
-
-        // Add jobId to each application for identification
-        const applicationsWithJobId = applications.map(app => ({
-          ...app,
-          jobId: modelJobId
-        }));
-
-        allApplications = allApplications.concat(applicationsWithJobId);
+        allApplications = allApplications.concat(applications);
         totalApplications += await model.countDocuments(query);
       }
 

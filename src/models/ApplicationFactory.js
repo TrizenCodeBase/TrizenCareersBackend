@@ -285,11 +285,22 @@ export const getApplicationModel = (jobId) => {
 
 // Helper function to get all application models
 export const getAllApplicationModels = () => {
-  return Object.entries(COLLECTION_MAPPING).map(([jobId, collectionName]) => ({
-    jobId,
-    collectionName,
-    model: getApplicationModel(jobId)
-  }));
+  // Deduplicate by collection name so each physical collection
+  // is only queried once, even if multiple jobIds map to it.
+  const collections = new Map();
+
+  for (const [jobId, collectionName] of Object.entries(COLLECTION_MAPPING)) {
+    if (!collections.has(collectionName)) {
+      collections.set(collectionName, {
+        collectionName,
+        // Use any representative jobId just to construct the model;
+        // the model itself is keyed by collection name.
+        model: getApplicationModel(jobId)
+      });
+    }
+  }
+
+  return Array.from(collections.values());
 };
 
 // Helper function to check if jobId is supported
