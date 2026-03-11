@@ -61,7 +61,9 @@ const defaultOrigins = [
   'http://localhost:8080',
   'http://192.168.1.8:3001', // LAN access (e.g. Careers Admin from another device)
   'https://careers.trizenventures.com',
-  'https://careersadminfrontend.llp.trizenventures.com'
+  'https://careersadminfrontend.llp.trizenventures.com',
+  'https://www.trizenventures.com',
+  'https://trizenventures.com'
 ];
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS

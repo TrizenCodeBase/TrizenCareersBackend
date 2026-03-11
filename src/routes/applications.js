@@ -450,13 +450,20 @@ router.get('/', async (req, res) => {
       let allApplications = [];
       let totalApplications = 0;
 
-      for (const { model } of allModels) {
+      for (const { collectionName, defaultJobId, model } of allModels) {
         const applications = await model.find(query)
           .populate('appliedBy', 'username email firstName lastName role')
           .sort(sortOptions)
           .lean()
           .exec();
-        allApplications = allApplications.concat(applications);
+
+        // Ensure legacy documents without jobId still have a sensible jobId
+        const applicationsWithJobId = applications.map(app => ({
+          ...app,
+          jobId: app.jobId || defaultJobId
+        }));
+
+        allApplications = allApplications.concat(applicationsWithJobId);
         totalApplications += await model.countDocuments(query);
       }
 

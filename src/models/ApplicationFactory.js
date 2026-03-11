@@ -293,8 +293,7 @@ export const getAllApplicationModels = () => {
     if (!collections.has(collectionName)) {
       collections.set(collectionName, {
         collectionName,
-        // Use any representative jobId just to construct the model;
-        // the model itself is keyed by collection name.
+        defaultJobId: jobId,
         model: getApplicationModel(jobId)
       });
     }
