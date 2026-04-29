@@ -211,13 +211,36 @@ router.post('/upload-resume', protect, (req, res, next) => {
 
     // MinIO path: use only when configured AND we have a buffer (memory storage)
     if (isMinioConfigured() && req.file.buffer && typeof req.file.buffer.length === 'number') {
-      const objectName = makeResumeObjectName(req.file.originalname);
-      const { url } = await uploadResumeToMinio(req.file.buffer, objectName, req.file.mimetype);
-      logger.info('Resume uploaded to MinIO:', { objectName, user: req.user?._id });
-      return res.status(200).json({
-        success: true,
-        data: { url, filename: path.basename(objectName) }
-      });
+      try {
+        // Log current MinIO config for debugging
+        logger.error('[DEBUG] MinIO config', {
+          MINIO_ENDPOINT: process.env.MINIO_ENDPOINT,
+          MINIO_PUBLIC_ENDPOINT: process.env.MINIO_PUBLIC_ENDPOINT,
+          MINIO_API_PORT: process.env.MINIO_API_PORT,
+          MINIO_USE_SSL: process.env.MINIO_USE_SSL,
+          MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY,
+          MINIO_BUCKET: process.env.MINIO_BUCKET,
+        });
+        const objectName = makeResumeObjectName(req.file.originalname);
+        const { url } = await uploadResumeToMinio(req.file.buffer, objectName, req.file.mimetype);
+        logger.info('Resume uploaded to MinIO:', { objectName, user: req.user?._id });
+        return res.status(200).json({
+          success: true,
+          data: { url, filename: path.basename(objectName) }
+        });
+      } catch (minioErr) {
+        logger.error('[ERROR] MinIO upload failed', {
+          error: minioErr.message,
+          stack: minioErr.stack,
+          MINIO_ENDPOINT: process.env.MINIO_ENDPOINT,
+          MINIO_PUBLIC_ENDPOINT: process.env.MINIO_PUBLIC_ENDPOINT,
+          MINIO_API_PORT: process.env.MINIO_API_PORT,
+          MINIO_USE_SSL: process.env.MINIO_USE_SSL,
+          MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY,
+          MINIO_BUCKET: process.env.MINIO_BUCKET,
+        });
+        return res.status(500).json({ success: false, error: 'MinIO upload failed: ' + minioErr.message });
+      }
     }
 
     // Disk path: req.file.filename is set by disk storage
