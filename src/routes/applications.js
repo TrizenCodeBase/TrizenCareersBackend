@@ -229,6 +229,29 @@ router.post('/upload-resume', protect, (req, res, next) => {
           data: { url, filename: path.basename(objectName) }
         });
       } catch (minioErr) {
+        // Fallback to local disk when MinIO is temporarily unreachable.
+        const fallbackFilename = path.basename(makeResumeObjectName(req.file.originalname));
+        const fallbackFilePath = path.join(uploadsDir, fallbackFilename);
+        try {
+          fs.writeFileSync(fallbackFilePath, req.file.buffer);
+          const baseUrl = `${req.protocol}://${req.get('host')}`;
+          const fallbackUrl = `${baseUrl}/uploads/resumes/${fallbackFilename}`;
+          logger.warn('[WARN] MinIO unavailable, stored resume on local disk', {
+            filename: fallbackFilename,
+            user: req.user?._id,
+            minioError: minioErr.message,
+          });
+          return res.status(200).json({
+            success: true,
+            data: { url: fallbackUrl, filename: fallbackFilename, storage: 'disk-fallback' }
+          });
+        } catch (diskFallbackErr) {
+          logger.error('[ERROR] Disk fallback after MinIO failure also failed', {
+            minioError: minioErr.message,
+            diskError: diskFallbackErr.message,
+          });
+        }
+
         logger.error('[ERROR] MinIO upload failed', {
           error: minioErr.message,
           stack: minioErr.stack,
