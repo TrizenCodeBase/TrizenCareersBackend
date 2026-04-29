@@ -37,10 +37,26 @@ let presignClient = null;
  * Parse MINIO_ENDPOINT into { protocol, host, port } components.
  * Returns an object so callers can create an AWS.Endpoint with correct values.
  */
+function normalizePort(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+
+  // Common misconfiguration: using 900 instead of MinIO API 9000.
+  if (trimmed === '900') {
+    logger.warn('MINIO_API_PORT is set to 900, auto-correcting to 9000.');
+    return '9000';
+  }
+
+  if (!/^\d+$/.test(trimmed)) return '';
+  const asNumber = Number(trimmed);
+  if (asNumber < 1 || asNumber > 65535) return '';
+  return String(asNumber);
+}
+
 function parseEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
   let protocol = useSSL ? 'https' : 'http';
   let host = 'localhost';
-  let port = rawPort || apiPort || '9000';
+  let port = normalizePort(rawPort) || normalizePort(apiPort) || '9000';
 
   if (rawEndpoint && typeof rawEndpoint === 'string') {
     const raw = rawEndpoint.trim();
@@ -58,8 +74,15 @@ function parseEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
           port = '9000';
         }
       } else {
-        host = raw;
-        port = rawPort || (apiPort ? String(apiPort).trim() : '9000');
+        // Handles "host" and "host:port" formats.
+        const hostPortMatch = raw.match(/^([^/:]+)(?::(\d+))?$/);
+        if (hostPortMatch) {
+          host = hostPortMatch[1] || host;
+          port = normalizePort(hostPortMatch[2]) || normalizePort(rawPort) || normalizePort(apiPort) || '9000';
+        } else {
+          host = raw;
+          port = normalizePort(rawPort) || normalizePort(apiPort) || '9000';
+        }
       }
     } catch (e) {
       logger.warn('Could not parse MINIO_ENDPOINT, using defaults', { rawEndpoint: raw, error: e.message });
@@ -372,9 +395,27 @@ export async function uploadResume(buffer, objectName, contentType) {
           const url = getObjectUrl(bucket, objectName);
           return { url, key: objectName };
         } catch (fallbackErr) {
+          const fallbackCode = fallbackErr.code || fallbackErr.statusCode;
+          const fallbackMsg = fallbackErr.message || '';
+
+          if (
+            fallbackCode === 'XMLParserError' ||
+            (fallbackMsg && (fallbackMsg.includes('XMLParserError') || fallbackMsg.includes('Unquoted attribute value')))
+          ) {
+            // Same parser issue on fallback endpoint: verify object existence before failing.
+            try {
+              await fallbackS3.headObject({ Bucket: bucket, Key: objectName }).promise();
+              logger.info('Resume uploaded to MinIO via fallback endpoint (verified after XML parse error)', { bucket, objectName });
+              const url = getObjectUrl(bucket, objectName);
+              return { url, key: objectName };
+            } catch (_) {
+              // Let normal error logging/throw happen below.
+            }
+          }
+
           logger.error('MinIO fallback upload failed', {
-            code: fallbackErr.code || fallbackErr.statusCode,
-            message: fallbackErr.message,
+            code: fallbackCode,
+            message: fallbackMsg,
             bucket,
             key: objectName,
           });
