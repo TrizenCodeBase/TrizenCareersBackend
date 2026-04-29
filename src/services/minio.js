@@ -165,6 +165,79 @@ function getPresignClient() {
   return getS3Client();
 }
 
+function createS3ClientForEndpoint(endpointUrl) {
+  const accessKeyId = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || '';
+  const secretAccessKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || '';
+  const region = process.env.MINIO_REGION || process.env.MINIO_REGION_NAME || DEFAULT_REGION;
+  if (!accessKeyId || !secretAccessKey || !endpointUrl) return null;
+
+  try {
+    const endpoint = new AWS.Endpoint(endpointUrl);
+    return new AWS.S3({
+      endpoint,
+      accessKeyId,
+      secretAccessKey,
+      s3ForcePathStyle: true,
+      signatureVersion: 'v4',
+      region,
+      sslEnabled: String(endpointUrl).startsWith('https://'),
+    });
+  } catch (e) {
+    logger.warn('Invalid alternate MinIO endpoint URL', { endpointUrl, error: e.message });
+    return null;
+  }
+}
+
+function getAlternateEndpointUrls() {
+  const urls = [];
+  const envCandidates = [
+    (process.env.MINIO_SERVER_URL || '').trim(),
+    (process.env.MINIO_PUBLIC_ENDPOINT || '').trim(),
+    (process.env.MINIO_ENDPOINT || '').trim(),
+  ].filter(Boolean);
+
+  for (const candidate of envCandidates) {
+    if (candidate.includes('://')) {
+      urls.push(candidate.replace(/\/$/, ''));
+      try {
+        const u = new URL(candidate);
+        // If 443 endpoint is configured but S3 API is actually on 9000, try that too.
+        if (u.port === '443' || !u.port) {
+          urls.push(`${u.protocol}//${u.hostname}:9000`);
+        }
+      } catch (_) {}
+      continue;
+    }
+
+    // Bare host fallback candidates.
+    urls.push(`https://${candidate}:9000`);
+    urls.push(`https://${candidate}:443`);
+    urls.push(`http://${candidate}:9000`);
+  }
+
+  return [...new Set(urls)];
+}
+
+async function tryAlternateUpload(params, bucket, objectName) {
+  const alternateUrls = getAlternateEndpointUrls();
+  for (const endpointUrl of alternateUrls) {
+    const client = createS3ClientForEndpoint(endpointUrl);
+    if (!client) continue;
+    try {
+      await client.putObject(params).promise();
+      logger.info('Resume uploaded via alternate MinIO endpoint', { endpointUrl, bucket, objectName });
+      return true;
+    } catch (err) {
+      logger.warn('Alternate MinIO endpoint upload failed', {
+        endpointUrl,
+        code: err.code || err.statusCode,
+        message: err.message,
+      });
+    }
+  }
+  return false;
+}
+
 export function isMinioConfigured() {
   const endpoint = (process.env.MINIO_ENDPOINT || '').trim();
   const accessKey = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER;
@@ -383,6 +456,11 @@ export async function uploadResume(buffer, objectName, contentType) {
           key: objectName,
           putErr: msg,
         });
+        const uploadedViaAlt = await tryAlternateUpload(params, bucket, objectName);
+        if (uploadedViaAlt) {
+          const url = getObjectUrl(bucket, objectName);
+          return { url, key: objectName };
+        }
         throw new Error('Upload may have failed due to storage response format. Please try again.');
       }
     } else if (code === 'UnknownEndpoint' || code === 'NetworkingError' || code === 'ENOTFOUND' || (msg && msg.includes('Inaccessible host'))) {
@@ -419,6 +497,11 @@ export async function uploadResume(buffer, objectName, contentType) {
             bucket,
             key: objectName,
           });
+          const uploadedViaAlt = await tryAlternateUpload(params, bucket, objectName);
+          if (uploadedViaAlt) {
+            const url = getObjectUrl(bucket, objectName);
+            return { url, key: objectName };
+          }
           throw fallbackErr;
         }
       } else {
@@ -428,6 +511,11 @@ export async function uploadResume(buffer, objectName, contentType) {
           bucket,
           key: objectName,
         });
+        const uploadedViaAlt = await tryAlternateUpload(params, bucket, objectName);
+        if (uploadedViaAlt) {
+          const url = getObjectUrl(bucket, objectName);
+          return { url, key: objectName };
+        }
         throw putErr;
       }
     } else {
