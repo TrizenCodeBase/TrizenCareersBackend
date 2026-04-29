@@ -167,6 +167,28 @@ async function createBucketIfNeeded(bucket) {
     ) {
       return;
     }
+    
+    // Fallback to public endpoint if internal DNS fails
+    if (createErr.code === 'UnknownEndpoint' || createErr.code === 'NetworkingError' || createErr.code === 'ENOTFOUND') {
+      const fallbackS3 = getPresignClient();
+      if (fallbackS3 && fallbackS3 !== s3) {
+        try {
+          await fallbackS3.createBucket({ Bucket: bucket }).promise();
+          logger.info('MinIO bucket created via fallback public endpoint', { bucket });
+          return;
+        } catch (fallbackErr) {
+          if (
+            fallbackErr.code === 'BucketAlreadyOwnedByYou' ||
+            fallbackErr.code === 'BucketAlreadyExists' ||
+            (fallbackErr.message && fallbackErr.message.includes('already own'))
+          ) {
+            return;
+          }
+          logger.warn('MinIO createBucket fallback failed', { bucket, code: fallbackErr.code });
+        }
+      }
+    }
+
     logger.warn('MinIO createBucket failed (bucket may already exist)', { bucket, code: createErr.code });
     throw createErr;
   }
@@ -240,7 +262,7 @@ export function extractKeyFromResumeLink(url) {
  * Stream a resume from MinIO for the backend proxy route. Returns { stream, contentType, contentLength } or null.
  */
 export async function getResumeStream(bucket, key) {
-  const s3 = getS3Client();
+  let s3 = getS3Client();
   if (!s3) return null;
   try {
     const head = await s3.headObject({ Bucket: bucket, Key: key }).promise();
@@ -249,6 +271,21 @@ export async function getResumeStream(bucket, key) {
     const stream = s3.getObject({ Bucket: bucket, Key: key }).createReadStream();
     return { stream, contentType, contentLength };
   } catch (err) {
+    if (err.code === 'UnknownEndpoint' || err.code === 'NetworkingError' || err.code === 'ENOTFOUND') {
+      const fallbackS3 = getPresignClient();
+      if (fallbackS3 && fallbackS3 !== s3) {
+        try {
+          const head = await fallbackS3.headObject({ Bucket: bucket, Key: key }).promise();
+          const contentType = head.ContentType || 'application/octet-stream';
+          const contentLength = head.ContentLength;
+          const stream = fallbackS3.getObject({ Bucket: bucket, Key: key }).createReadStream();
+          return { stream, contentType, contentLength };
+        } catch (fallbackErr) {
+          logger.warn('MinIO getResumeStream fallback failed', { bucket, key, error: fallbackErr.message });
+          return null;
+        }
+      }
+    }
     logger.warn('MinIO getResumeStream failed', { bucket, key, error: err.message });
     return null;
   }
@@ -324,6 +361,33 @@ export async function uploadResume(buffer, objectName, contentType) {
           putErr: msg,
         });
         throw new Error('Upload may have failed due to storage response format. Please try again.');
+      }
+    } else if (code === 'UnknownEndpoint' || code === 'NetworkingError' || code === 'ENOTFOUND' || (msg && msg.includes('Inaccessible host'))) {
+      logger.warn('MinIO internal endpoint unreachable. Retrying with public endpoint.', { bucket, key: objectName });
+      const fallbackS3 = getPresignClient();
+      if (fallbackS3 && fallbackS3 !== s3) {
+        try {
+          await fallbackS3.putObject(params).promise();
+          logger.info('Resume uploaded to MinIO via fallback public endpoint', { bucket, objectName });
+          const url = getObjectUrl(bucket, objectName);
+          return { url, key: objectName };
+        } catch (fallbackErr) {
+          logger.error('MinIO fallback upload failed', {
+            code: fallbackErr.code || fallbackErr.statusCode,
+            message: fallbackErr.message,
+            bucket,
+            key: objectName,
+          });
+          throw fallbackErr;
+        }
+      } else {
+        logger.error('MinIO putObject failed (no fallback available)', {
+          code,
+          message: msg,
+          bucket,
+          key: objectName,
+        });
+        throw putErr;
       }
     } else {
       logger.error('MinIO putObject failed', {
