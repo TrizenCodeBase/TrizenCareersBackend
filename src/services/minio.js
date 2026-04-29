@@ -33,10 +33,14 @@ let presignClient = null;
  * When the URL has no port, default to 9000 (MinIO API). 443 is usually the Console and returns "S3 API Requests must be made to API port."
  * Set MINIO_API_PORT to override (e.g. 9000). Set MINIO_ENDPOINT to include port (e.g. https://host:9000) to skip default.
  */
-function buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
+/**
+ * Parse MINIO_ENDPOINT into { protocol, host, port } components.
+ * Returns an object so callers can create an AWS.Endpoint with correct values.
+ */
+function parseEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
   let protocol = useSSL ? 'https' : 'http';
   let host = 'localhost';
-  let port = rawPort || '9000';
+  let port = rawPort || apiPort || '9000';
 
   if (rawEndpoint && typeof rawEndpoint === 'string') {
     const raw = rawEndpoint.trim();
@@ -45,21 +49,24 @@ function buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
         const url = new URL(raw);
         host = url.hostname || host;
         protocol = url.protocol.replace(':', '') || protocol;
+        // url.port is '' when the URL uses the default port for that protocol
         if (url.port) {
           port = url.port;
+        } else if (apiPort) {
+          port = String(apiPort).trim();
         } else {
-          port = (apiPort !== undefined && apiPort !== null && apiPort !== '') ? String(apiPort).trim() : '9000';
+          port = '9000';
         }
       } else {
         host = raw;
-        port = rawPort || (apiPort !== undefined && apiPort !== null && apiPort !== '' ? String(apiPort).trim() : '9000');
+        port = rawPort || (apiPort ? String(apiPort).trim() : '9000');
       }
     } catch (e) {
       logger.warn('Could not parse MINIO_ENDPOINT, using defaults', { rawEndpoint: raw, error: e.message });
     }
   }
 
-  return `${protocol}://${host}${port ? `:${port}` : ''}`;
+  return { protocol, host, port };
 }
 
 function getS3Client() {
@@ -70,7 +77,12 @@ function getS3Client() {
   const apiPort = process.env.MINIO_API_PORT || '';
   const useSSL = (process.env.MINIO_USE_SSL || '').toLowerCase() === 'true';
 
-  const endpoint = buildEndpoint(rawEndpoint, rawPort, apiPort, useSSL);
+  const { protocol, host, port } = parseEndpoint(rawEndpoint, rawPort, apiPort, useSSL);
+  // Build canonical endpoint string and wrap in AWS.Endpoint so SDK correctly
+  // extracts host + port even for non-standard Docker service hostnames.
+  const endpointStr = `${protocol}://${host}:${port}`;
+  const awsEndpoint = new AWS.Endpoint(endpointStr);
+
   const accessKeyId = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || '';
   const secretAccessKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || '';
   const region = process.env.MINIO_REGION || process.env.MINIO_REGION_NAME || DEFAULT_REGION;
@@ -79,15 +91,21 @@ function getS3Client() {
     return null;
   }
 
-  logger.info('MinIO/S3 storage configured', { endpoint, bucket: (process.env.MINIO_BUCKET || DEFAULT_BUCKET).toLowerCase() });
+  logger.info('MinIO/S3 storage configured', {
+    endpoint: endpointStr,
+    host: awsEndpoint.host,
+    port: awsEndpoint.port,
+    bucket: (process.env.MINIO_BUCKET || DEFAULT_BUCKET).toLowerCase(),
+  });
 
   s3Client = new AWS.S3({
-    endpoint,
+    endpoint: awsEndpoint,
     accessKeyId,
     secretAccessKey,
     s3ForcePathStyle: true,
     signatureVersion: 'v4',
     region,
+    sslEnabled: protocol === 'https',
   });
 
   return s3Client;
@@ -98,20 +116,24 @@ function getS3Client() {
  * so presigned URLs point to a host reachable from the browser.
  */
 function getPresignClient() {
-  const publicEndpoint = (process.env.MINIO_PUBLIC_ENDPOINT || '').trim();
-  if (publicEndpoint) {
+  const publicEndpointRaw = (process.env.MINIO_PUBLIC_ENDPOINT || '').trim().replace(/\/$/, '');
+  if (publicEndpointRaw) {
     if (!presignClient) {
       const accessKeyId = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || '';
       const secretAccessKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || '';
       const region = process.env.MINIO_REGION || process.env.MINIO_REGION_NAME || DEFAULT_REGION;
       if (accessKeyId && secretAccessKey) {
+        // Wrap public endpoint in AWS.Endpoint for correct port resolution
+        const awsPublicEndpoint = new AWS.Endpoint(publicEndpointRaw);
+        const sslEnabled = publicEndpointRaw.startsWith('https');
         presignClient = new AWS.S3({
-          endpoint: publicEndpoint.replace(/\/$/, ''),
+          endpoint: awsPublicEndpoint,
           accessKeyId,
           secretAccessKey,
           s3ForcePathStyle: true,
           signatureVersion: 'v4',
           region,
+          sslEnabled,
         });
       }
     }
