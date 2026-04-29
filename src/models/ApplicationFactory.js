@@ -67,7 +67,8 @@ const baseApplicationSchema = new mongoose.Schema({
   appliedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: false,
+    default: null
   }
 }, { timestamps: true });
 

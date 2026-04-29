@@ -189,8 +189,8 @@ const validateApplicationConditional = (req, res, next) => {
   next();
 };
 
-// POST /api/v1/applications/upload-resume - Upload resume file (protected)
-router.post('/upload-resume', protect, (req, res, next) => {
+// POST /api/v1/applications/upload-resume - Upload resume file
+router.post('/upload-resume', (req, res, next) => {
   uploadResume.single('resume')(req, res, (err) => {
     if (err instanceof multer.MulterError) {
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -332,12 +332,12 @@ router.get('/resume', async (req, res) => {
 });
 
 // POST /api/v1/applications - Submit a new application
-router.post('/', protect, validateApplication, validateApplicationConditional, async (req, res) => {
+router.post('/', validateApplication, validateApplicationConditional, async (req, res) => {
   try {
     // Debug logging
     logger.info('Application submission request received:', {
       body: req.body,
-      user: req.user ? req.user._id : 'No user'
+      user: req.user?._id || null
     });
 
     const errors = validationResult(req);
@@ -364,16 +364,19 @@ router.post('/', protect, validateApplication, validateApplicationConditional, a
     const ApplicationModel = getApplicationModel(jobId);
 
     // Check if user has already applied for this specific job
-    const existingApplication = await ApplicationModel.findOne({
-      appliedBy: req.user._id,
-      jobId
-    });
-
-    if (existingApplication) {
-      return res.status(400).json({
-        success: false,
-        error: 'You have already applied for this position'
+    // Duplicate prevention for authenticated users only.
+    if (req.user?._id) {
+      const existingApplication = await ApplicationModel.findOne({
+        appliedBy: req.user._id,
+        jobId
       });
+
+      if (existingApplication) {
+        return res.status(400).json({
+          success: false,
+          error: 'You have already applied for this position'
+        });
+      }
     }
 
     // Create new application
@@ -381,14 +384,19 @@ router.post('/', protect, validateApplication, validateApplicationConditional, a
       jobId: req.body.jobId,
       fullName: req.body.fullName,
       email: req.body.email,
-      appliedBy: req.user._id
+      appliedBy: req.user?._id || null
     });
 
-    const application = await ApplicationModel.create({
+    const payload = {
       ...req.body,
-      jobId,
-      appliedBy: req.user._id
-    });
+      jobId
+    };
+
+    if (req.user?._id) {
+      payload.appliedBy = req.user._id;
+    }
+
+    const application = await ApplicationModel.create(payload);
 
     logger.info('Application created successfully:', application._id);
 
