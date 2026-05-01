@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import userRoutes from './routes/users.js';
 import applicationRoutes from './routes/applications.js';
+import supportRoutes from './routes/support.js';
 import { logger } from './utils/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -137,6 +138,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // API Routes
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/applications', applicationRoutes);
+app.use('/api/v1/support', supportRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
