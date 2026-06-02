@@ -780,6 +780,8 @@ router.post('/:id/send-acceptance-email', protect, async (req, res) => {
     const getJobTitle = (jobId) => {
       const jobMap = {
         'TV-AIML-INT-2025-001': 'AIML Intern',
+        'TV-AI-AUT-2026-001': 'Associate AI & Automation Engineer',
+        'TV-AI-FS-2026-002': 'AI & Full Stack Intern',
         'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
         'TV-MKT-SMM-2025-003': 'Social Media Management Intern',
       };
@@ -879,6 +881,8 @@ router.post('/:id/send-rejection-email', protect, async (req, res) => {
     const getJobTitle = (jobId) => {
       const jobMap = {
         'TV-AIML-INT-2025-001': 'AIML Intern',
+        'TV-AI-AUT-2026-001': 'Associate AI & Automation Engineer',
+        'TV-AI-FS-2026-002': 'AI & Full Stack Intern',
         'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
         'TV-MKT-SMM-2025-003': 'Social Media Management Intern',
       };
