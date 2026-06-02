@@ -251,6 +251,8 @@ const socialMediaApplicationSchema = new mongoose.Schema({
 const COLLECTION_MAPPING = {
   'TV-AIML-INT-2025-001': 'aiml_applications',
   'TV-AIML-INT-2026-001': 'aiml_applications',
+  'TV-AI-AUT-2026-001': 'ai_automation_applications',
+  'TV-AI-FS-2026-002': 'ai_fullstack_applications',
   'TV-WEB-MERN-2025-005': 'mern_applications',
   'TV-WEB-MERN-2025-002': 'mern_applications',
   'TV-WEB-MERN-2026-005': 'mern_applications',
@@ -263,6 +265,8 @@ const COLLECTION_MAPPING = {
 const SCHEMA_MAPPING = {
   'TV-AIML-INT-2025-001': aimlApplicationSchema,
   'TV-AIML-INT-2026-001': aimlApplicationSchema,
+  'TV-AI-AUT-2026-001': aimlApplicationSchema,
+  'TV-AI-FS-2026-002': aimlApplicationSchema,
   'TV-WEB-MERN-2025-005': mernApplicationSchema,
   'TV-WEB-MERN-2025-002': mernApplicationSchema,
   'TV-WEB-MERN-2026-005': mernApplicationSchema,
