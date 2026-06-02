@@ -103,7 +103,7 @@ const aimlApplicationSchema = new mongoose.Schema({
   },
   researchPapers: {
     type: String,
-    required: [true, 'Research papers information is required'],
+    required: false,
     trim: true
   },
   internshipExperience: {

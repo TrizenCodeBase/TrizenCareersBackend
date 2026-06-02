@@ -130,7 +130,7 @@ const validateApplicationConditional = (req, res, next) => {
       }
     }
   } else {
-    // AIML: requires researchPapers + yearOfPassingOut; MERN: requires yearOfPassingOut only (no researchPapers)
+    // AIML/MERN/common roles: no researchPapers required, yearOfPassingOut required where applicable
     const isMernJobId =
       jobId === 'TV-WEB-MERN-2025-005' ||
       jobId === 'TV-WEB-MERN-2025-002' ||
@@ -144,7 +144,7 @@ const validateApplicationConditional = (req, res, next) => {
         ]
       : [
           'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
-          'yearOfPassingOut', 'researchPapers', 'internshipExperience', 'duration', 'aiMlProjects',
+          'yearOfPassingOut', 'internshipExperience', 'duration', 'aiMlProjects',
           'preferredStartDate', 'expectedStipend'
         ];
 
