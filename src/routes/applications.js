@@ -4,6 +4,20 @@ import fs from 'fs';
 import multer from 'multer';
 import { body, validationResult } from 'express-validator';
 import { getApplicationModel, isSupportedJobId, getAllApplicationModels } from '../models/ApplicationFactory.js';
+import {
+  ALL_SUPPORTED_JOB_IDS,
+  LEGACY_SMM_JOB_IDS,
+  CONTENT_SOCIAL_MEDIA_JOB_IDS,
+  GROWTH_MARKETING_JOB_IDS,
+  MERN_INTERN_JOB_IDS,
+  MERN_FULLTIME_JOB_IDS,
+  isMarketingApplicationJob,
+  isEngineeringFullTimeJob,
+  isEngineeringInternJob,
+  isMernFullTimeJob,
+  requiresYearOfPassingOut,
+  getJobTitle
+} from '../config/jobRegistry.js';
 import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
@@ -37,8 +51,82 @@ if (!fs.existsSync(uploadsDir)) {
   logger.info('Created uploads/resumes directory');
 }
 
-const ALLOWED_MIMES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+const ALLOWED_MIMES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/jpeg',
+  'image/png',
+  'image/webp'
+];
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+const JOB_ID_PATTERN = /^TV-[A-Z]+-[A-Z]+-\d{4}-\d{3}$/;
+
+const normalizeJobId = (rawJobId) => {
+  if (!rawJobId || typeof rawJobId !== 'string') return rawJobId;
+  const trimmed = rawJobId.trim();
+  if (JOB_ID_PATTERN.test(trimmed)) return trimmed;
+  const parts = trimmed.split('-');
+  if (parts.length >= 5) {
+    const candidate = parts.slice(0, 5).join('-');
+    if (JOB_ID_PATTERN.test(candidate)) return candidate;
+  }
+  return trimmed;
+};
+
+/** Remove empty optional fields so Mongoose enum validators do not reject "". */
+function sanitizeApplicationPayload(jobId, body) {
+  const payload = { ...body };
+
+  const stripIfEmpty = (field) => {
+    const value = payload[field];
+    if (typeof value === 'string' && value.trim() === '') {
+      delete payload[field];
+    }
+  };
+
+  if (isEngineeringFullTimeJob(jobId) && !isMernFullTimeJob(jobId)) {
+    stripIfEmpty('yearOfPassingOut');
+    stripIfEmpty('duration');
+  } else if (isMernFullTimeJob(jobId)) {
+    stripIfEmpty('duration');
+  }
+
+  return payload;
+}
+
+const missingStringFields = (body, fields) =>
+  fields.filter((field) => !body[field] || (typeof body[field] === 'string' && body[field].trim() === ''));
+
+const missingArrayFields = (body, fields) =>
+  fields.filter((field) => !body[field] || !Array.isArray(body[field]) || body[field].length === 0);
+
+const validateUrlFields = (res, body, fields) => {
+  for (const field of fields) {
+    const value = body[field];
+    if (!value || typeof value !== 'string' || !value.trim()) continue;
+    try {
+      new URL(value);
+    } catch {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid URL format for ${field}`
+      });
+    }
+  }
+  return null;
+};
+
+const validationFailed = (res, missingFields) =>
+  res.status(400).json({
+    success: false,
+    error: 'Validation failed',
+    details: missingFields.map((field) => ({
+      field,
+      message: `${field} is required`
+    }))
+  });
 
 function makeResumeObjectName(originalName) {
   const ext = path.extname(originalName) || '.pdf';
@@ -60,7 +148,7 @@ const uploadResume = multer({
   limits: { fileSize: MAX_FILE_SIZE },
   fileFilter: (_req, file, cb) => {
     if (!ALLOWED_MIMES.includes(file.mimetype)) {
-      return cb(new Error('Invalid file type. Allowed: PDF, DOC, DOCX.'), false);
+      return cb(new Error('Invalid file type. Allowed: PDF, DOC, DOCX, JPG, PNG, WEBP.'), false);
     }
     cb(null, true);
   }
@@ -80,73 +168,119 @@ const validateApplication = [
 
 // Conditional validation middleware
 const validateApplicationConditional = (req, res, next) => {
+  req.body.jobId = normalizeJobId(req.body.jobId);
   const { jobId } = req.body;
-  
-  // Social Media Management Intern specific validation
-  if (jobId === 'TV-MKT-SMM-2025-003' || jobId === 'TV-MKT-SMM-2026-003') {
-    // Check required fields for Social Media Management Intern
-    const requiredFields = [
-      'currentQualification', 'collegeUniversity', 'socialMediaPlatforms', 
-      'contentCreationSkills', 'portfolioWorkSamples', 'resumeLink', 
-      'preferredStartDate', 'workPreference', 'internshipExperience', 'expectedStipend'
+
+  if (LEGACY_SMM_JOB_IDS.includes(jobId)) {
+    const missingFields = [
+      ...missingStringFields(req.body, [
+        'currentQualification', 'collegeUniversity', 'portfolioWorkSamples', 'resumeLink',
+        'preferredStartDate', 'workPreference', 'internshipExperience', 'expectedStipend'
+      ]),
+      ...missingArrayFields(req.body, ['socialMediaPlatforms', 'contentCreationSkills'])
     ];
-    
-    const missingFields = requiredFields.filter(field => {
-      if (field === 'socialMediaPlatforms' || field === 'contentCreationSkills') {
-        return !req.body[field] || !Array.isArray(req.body[field]) || req.body[field].length === 0;
-      }
-      return !req.body[field] || req.body[field].trim() === '';
-    });
-    
+
     if (missingFields.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: missingFields.map(field => ({
-          field,
-          message: `${field} is required`
-        }))
-      });
+      return validationFailed(res, missingFields);
     }
-    
-    // Validate work preference
+
     if (!['Hybrid', 'Remote', 'Office'].includes(req.body.workPreference)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid work preference. Must be Hybrid, Remote, or Office'
       });
     }
-    
-    // Validate URLs
-    const urlFields = ['portfolioWorkSamples', 'resumeLink'];
-    for (const field of urlFields) {
-      try {
-        new URL(req.body[field]);
-      } catch {
-        return res.status(400).json({
-          success: false,
-          error: `Invalid URL format for ${field}`
-        });
-      }
+
+    const urlError = validateUrlFields(res, req.body, ['portfolioWorkSamples', 'resumeLink']);
+    if (urlError) return urlError;
+    return next();
+  }
+
+  if (CONTENT_SOCIAL_MEDIA_JOB_IDS.includes(jobId)) {
+    const isIntern = jobId === 'TV-MKT-CSMI-2026-006';
+    const missingFields = [
+      ...missingStringFields(req.body, [
+        'socialMediaPageUrl', 'portfolioWorkSamples', 'resumeLink', 'contentCreated',
+        'proudContentOrCampaign', 'preferredStartDate', 'workPreference', 'expectedStipend', 'motivation'
+      ]),
+      ...missingArrayFields(req.body, ['socialMediaPlatforms', 'contentCreationSkills'])
+    ];
+
+    if (!isIntern) {
+      missingFields.push(...missingStringFields(req.body, ['managedPages']));
+    } else {
+      missingFields.push(...missingStringFields(req.body, ['currentQualification', 'collegeUniversity']));
     }
-  } else {
-    // AIML/MERN/common roles: no researchPapers required, yearOfPassingOut required where applicable
-    const isMernJobId =
-      jobId === 'TV-WEB-MERN-2025-005' ||
-      jobId === 'TV-WEB-MERN-2025-002' ||
-      jobId === 'TV-WEB-MERN-2026-005' ||
-      jobId === 'TV-WEB-MERN-2026-002';
-    const requiredFields = isMernJobId
+
+    if (missingFields.length > 0) {
+      return validationFailed(res, missingFields);
+    }
+
+    if (!['Hybrid', 'Remote', 'Office'].includes(req.body.workPreference)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid work preference. Must be Hybrid, Remote, or Office'
+      });
+    }
+
+    const urlError = validateUrlFields(res, req.body, [
+      'socialMediaPageUrl', 'portfolioWorkSamples', 'resumeLink', 'contentSamplesLink'
+    ]);
+    if (urlError) return urlError;
+    return next();
+  }
+
+  if (GROWTH_MARKETING_JOB_IDS.includes(jobId)) {
+    const isIntern = jobId === 'TV-MKT-GMI-2026-005';
+    const requiredFields = isIntern
       ? [
-          'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
-          'yearOfPassingOut', 'internshipExperience', 'duration', 'aiMlProjects',
-          'preferredStartDate', 'expectedStipend'
+          'marketingToolsUsed', 'projectsOrActivities', 'growthMarketingInterest',
+          'campaignOrEventOrganized', 'resumeLink', 'preferredStartDate', 'workPreference',
+          'expectedStipend', 'motivation'
         ]
       : [
-          'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
-          'yearOfPassingOut', 'internshipExperience', 'duration', 'aiMlProjects',
-          'preferredStartDate', 'expectedStipend'
+          'campaignsWorkedOn', 'marketingToolsUsed', 'resultsAchieved', 'resumeLink',
+          'preferredStartDate', 'workPreference', 'expectedStipend', 'motivation'
         ];
+
+    const missingFields = missingStringFields(req.body, requiredFields);
+    if (missingFields.length > 0) {
+      return validationFailed(res, missingFields);
+    }
+
+    if (!['Hybrid', 'Remote', 'Office'].includes(req.body.workPreference)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid work preference. Must be Hybrid, Remote, or Office'
+      });
+    }
+
+    const urlError = validateUrlFields(res, req.body, [
+      'resumeLink', 'portfolioUrl', 'portfolioWorkSamples'
+    ]);
+    if (urlError) return urlError;
+    return next();
+  }
+
+  if (!isMarketingApplicationJob(jobId)) {
+    const engineeringFullTime = isEngineeringFullTimeJob(jobId);
+    const engineeringIntern = isEngineeringInternJob(jobId);
+    const mernFullTime = isMernFullTimeJob(jobId);
+    const engineeringBaseFields = [
+      'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
+      'internshipExperience', 'aiMlProjects', 'preferredStartDate', 'expectedStipend'
+    ];
+    const requiredFields = engineeringFullTime && !mernFullTime
+      ? engineeringBaseFields
+      : engineeringIntern
+        ? [...engineeringBaseFields.slice(0, 4), 'yearOfPassingOut', ...engineeringBaseFields.slice(4), 'duration']
+        : mernFullTime
+          ? [...engineeringBaseFields.slice(0, 4), 'yearOfPassingOut', ...engineeringBaseFields.slice(4)]
+          : [
+              'portfolioUrl', 'resumeLink', 'educationStatus', 'degreeDiscipline',
+              'yearOfPassingOut', 'internshipExperience', 'duration', 'aiMlProjects',
+              'preferredStartDate', 'expectedStipend'
+            ];
 
     const missingFields = requiredFields.filter(field =>
       !req.body[field] || (typeof req.body[field] === 'string' && req.body[field].trim() === '')
@@ -163,13 +297,14 @@ const validateApplicationConditional = (req, res, next) => {
       });
     }
 
-    // Validate yearOfPassingOut for both AIML and MERN
-    if (!['2024', '2025', '2026'].includes((req.body.yearOfPassingOut || '').trim())) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: [{ field: 'yearOfPassingOut', message: 'Year of passing out must be 2024, 2025, or 2026' }]
-      });
+    if (requiresYearOfPassingOut(jobId)) {
+      if (!['2024', '2025', '2026'].includes((req.body.yearOfPassingOut || '').trim())) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: [{ field: 'yearOfPassingOut', message: 'Year of passing out must be 2024, 2025, or 2026' }]
+        });
+      }
     }
 
     // Validate URLs
@@ -185,9 +320,21 @@ const validateApplicationConditional = (req, res, next) => {
       }
     }
   }
-  
+
   next();
 };
+
+// GET /api/v1/applications/supported-jobs - List job IDs accepted by the API
+router.get('/supported-jobs', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Supported application job IDs',
+    data: ALL_SUPPORTED_JOB_IDS.map((id) => ({
+      id,
+      title: getJobTitle(id)
+    }))
+  });
+});
 
 // POST /api/v1/applications/upload-resume - Upload resume file
 router.post('/upload-resume', (req, res, next) => {
@@ -350,6 +497,7 @@ router.post('/', validateApplication, validateApplicationConditional, async (req
       });
     }
 
+    req.body.jobId = normalizeJobId(req.body.jobId);
     const { jobId } = req.body;
 
     // Check if jobId is supported
@@ -387,10 +535,10 @@ router.post('/', validateApplication, validateApplicationConditional, async (req
       appliedBy: req.user?._id || null
     });
 
-    const payload = {
+    const payload = sanitizeApplicationPayload(jobId, {
       ...req.body,
       jobId
-    };
+    });
 
     if (req.user?._id) {
       payload.appliedBy = req.user._id;
@@ -1012,23 +1160,6 @@ router.post('/:id/send-acceptance-email', protect, async (req, res) => {
       });
     }
 
-    // Get job title mapping
-    const getJobTitle = (jobId) => {
-      const jobMap = {
-        'TV-AIML-INT-2025-001': 'AIML Intern',
-        'TV-AIML-INT-2026-001': 'AIML Intern',
-        'TV-AI-AUT-2026-001': 'Associate AI & Automation Engineer',
-        'TV-AI-FS-2026-002': 'AI & Full Stack Intern',
-        'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
-        'TV-WEB-MERN-2025-002': 'MERN Stack Developer Intern',
-        'TV-WEB-MERN-2026-005': 'MERN Stack Developer Intern',
-        'TV-WEB-MERN-2026-002': 'MERN Stack Developer Intern',
-        'TV-MKT-SMM-2025-003': 'Social Media Management Intern',
-        'TV-MKT-SMM-2026-003': 'Social Media Management Intern',
-      };
-      return jobMap[jobId] || jobId;
-    };
-
     // Send acceptance email
     logger.info(`Sending acceptance email to: ${application.email}`);
     logger.info(`Email service base URL: ${EMAIL_SERVICE_CONFIG.baseUrl}`);
@@ -1117,23 +1248,6 @@ router.post('/:id/send-rejection-email', protect, async (req, res) => {
         error: 'Application status must be "rejected" to send rejection email'
       });
     }
-
-    // Get job title mapping
-    const getJobTitle = (jobId) => {
-      const jobMap = {
-        'TV-AIML-INT-2025-001': 'AIML Intern',
-        'TV-AIML-INT-2026-001': 'AIML Intern',
-        'TV-AI-AUT-2026-001': 'Associate AI & Automation Engineer',
-        'TV-AI-FS-2026-002': 'AI & Full Stack Intern',
-        'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
-        'TV-WEB-MERN-2025-002': 'MERN Stack Developer Intern',
-        'TV-WEB-MERN-2026-005': 'MERN Stack Developer Intern',
-        'TV-WEB-MERN-2026-002': 'MERN Stack Developer Intern',
-        'TV-MKT-SMM-2025-003': 'Social Media Management Intern',
-        'TV-MKT-SMM-2026-003': 'Social Media Management Intern',
-      };
-      return jobMap[jobId] || jobId;
-    };
 
     // Send rejection email
     const emailResponse = await fetch(`${EMAIL_SERVICE_CONFIG.baseUrl}/api/support/send-application-rejection`, {

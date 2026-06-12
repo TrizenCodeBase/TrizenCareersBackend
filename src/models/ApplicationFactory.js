@@ -1,4 +1,7 @@
 import mongoose from 'mongoose';
+import { ALL_SUPPORTED_JOB_IDS, assertRegistryMatchesMappings } from '../config/jobRegistry.js';
+
+const modelCache = new Map();
 
 // Base schema with common fields
 const baseApplicationSchema = new mongoose.Schema({
@@ -97,7 +100,6 @@ const aimlApplicationSchema = new mongoose.Schema({
   },
   yearOfPassingOut: {
     type: String,
-    required: [true, 'Year of passing out is required'],
     enum: ['2024', '2025', '2026'],
     trim: true
   },
@@ -113,12 +115,11 @@ const aimlApplicationSchema = new mongoose.Schema({
   },
   duration: {
     type: String,
-    required: [true, 'Duration is required'],
     trim: true
   },
   aiMlProjects: {
     type: String,
-    required: [true, 'AI/ML projects information is required'],
+    required: [true, 'Projects and experience information is required'],
     trim: true
   },
   preferredStartDate: {
@@ -158,7 +159,6 @@ const mernApplicationSchema = new mongoose.Schema({
   },
   yearOfPassingOut: {
     type: String,
-    required: [true, 'Year of passing out is required'],
     enum: ['2024', '2025', '2026'],
     trim: true
   },
@@ -169,12 +169,11 @@ const mernApplicationSchema = new mongoose.Schema({
   },
   duration: {
     type: String,
-    required: [true, 'Duration is required'],
     trim: true
   },
   aiMlProjects: {
     type: String,
-    required: [true, 'AI/ML projects information is required'],
+    required: [true, 'Projects and experience information is required'],
     trim: true
   },
   preferredStartDate: {
@@ -247,6 +246,129 @@ const socialMediaApplicationSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// Growth Marketing Executive / Intern schema
+const growthMarketingApplicationSchema = new mongoose.Schema({
+  ...baseApplicationSchema.obj,
+  resumeLink: {
+    type: String,
+    required: [true, 'Resume link is required'],
+    trim: true
+  },
+  portfolioUrl: {
+    type: String,
+    trim: true
+  },
+  portfolioWorkSamples: {
+    type: String,
+    trim: true
+  },
+  campaignsWorkedOn: {
+    type: String,
+    trim: true
+  },
+  marketingToolsUsed: {
+    type: String,
+    required: [true, 'Marketing tools used is required'],
+    trim: true
+  },
+  resultsAchieved: {
+    type: String,
+    trim: true
+  },
+  projectsOrActivities: {
+    type: String,
+    trim: true
+  },
+  growthMarketingInterest: {
+    type: String,
+    trim: true
+  },
+  campaignOrEventOrganized: {
+    type: String,
+    trim: true
+  },
+  preferredStartDate: {
+    type: String,
+    required: [true, 'Preferred start date is required'],
+    trim: true
+  },
+  workPreference: {
+    type: String,
+    enum: ['Hybrid', 'Remote', 'Office'],
+    required: [true, 'Work preference is required'],
+    trim: true
+  }
+}, { timestamps: true });
+
+// Content & Social Media Executive / Intern schema
+const contentSocialMediaApplicationSchema = new mongoose.Schema({
+  ...baseApplicationSchema.obj,
+  resumeLink: {
+    type: String,
+    required: [true, 'Resume link is required'],
+    trim: true
+  },
+  socialMediaPageUrl: {
+    type: String,
+    required: [true, 'Social media page URL is required'],
+    trim: true
+  },
+  portfolioWorkSamples: {
+    type: String,
+    required: [true, 'Portfolio or work samples link is required'],
+    trim: true
+  },
+  contentSamplesLink: {
+    type: String,
+    trim: true
+  },
+  contentCreated: {
+    type: String,
+    required: [true, 'Content created description is required'],
+    trim: true
+  },
+  proudContentOrCampaign: {
+    type: String,
+    required: [true, 'Proud content or campaign response is required'],
+    trim: true
+  },
+  managedPages: {
+    type: String,
+    trim: true
+  },
+  currentQualification: {
+    type: String,
+    trim: true
+  },
+  collegeUniversity: {
+    type: String,
+    trim: true
+  },
+  socialMediaPlatforms: [{
+    type: String,
+    trim: true
+  }],
+  contentCreationSkills: [{
+    type: String,
+    trim: true
+  }],
+  preferredStartDate: {
+    type: String,
+    required: [true, 'Preferred start date is required'],
+    trim: true
+  },
+  workPreference: {
+    type: String,
+    enum: ['Hybrid', 'Remote', 'Office'],
+    required: [true, 'Work preference is required'],
+    trim: true
+  },
+  hoursPerWeek: {
+    type: String,
+    trim: true
+  }
+}, { timestamps: true });
+
 // Collection mapping
 const COLLECTION_MAPPING = {
   'TV-AIML-INT-2025-001': 'aiml_applications',
@@ -257,8 +379,14 @@ const COLLECTION_MAPPING = {
   'TV-WEB-MERN-2025-002': 'mern_applications',
   'TV-WEB-MERN-2026-005': 'mern_applications',
   'TV-WEB-MERN-2026-002': 'mern_applications',
+  'TV-WEB-MERN-2026-007': 'mern_applications',
+  'TV-WEB-MERN-2026-008': 'mern_applications',
   'TV-MKT-SMM-2025-003': 'social_media_applications',
-  'TV-MKT-SMM-2026-003': 'social_media_applications'
+  'TV-MKT-SMM-2026-003': 'social_media_applications',
+  'TV-MKT-CSM-2026-004': 'content_social_media_applications',
+  'TV-MKT-CSMI-2026-006': 'content_social_media_applications',
+  'TV-MKT-GME-2026-003': 'growth_marketing_applications',
+  'TV-MKT-GMI-2026-005': 'growth_marketing_applications'
 };
 
 // Schema mapping
@@ -271,21 +399,33 @@ const SCHEMA_MAPPING = {
   'TV-WEB-MERN-2025-002': mernApplicationSchema,
   'TV-WEB-MERN-2026-005': mernApplicationSchema,
   'TV-WEB-MERN-2026-002': mernApplicationSchema,
+  'TV-WEB-MERN-2026-007': mernApplicationSchema,
+  'TV-WEB-MERN-2026-008': mernApplicationSchema,
   'TV-MKT-SMM-2025-003': socialMediaApplicationSchema,
-  'TV-MKT-SMM-2026-003': socialMediaApplicationSchema
+  'TV-MKT-SMM-2026-003': socialMediaApplicationSchema,
+  'TV-MKT-CSM-2026-004': contentSocialMediaApplicationSchema,
+  'TV-MKT-CSMI-2026-006': contentSocialMediaApplicationSchema,
+  'TV-MKT-GME-2026-003': growthMarketingApplicationSchema,
+  'TV-MKT-GMI-2026-005': growthMarketingApplicationSchema
 };
 
 // Factory function to get the appropriate model
 export const getApplicationModel = (jobId) => {
   const collectionName = COLLECTION_MAPPING[jobId];
   const schema = SCHEMA_MAPPING[jobId];
-  
+
   if (!collectionName || !schema) {
     throw new Error(`No collection mapping found for jobId: ${jobId}`);
   }
-  
-  // Create model with dynamic collection name
-  return mongoose.model(collectionName, schema, collectionName);
+
+  if (modelCache.has(collectionName)) {
+    return modelCache.get(collectionName);
+  }
+
+  const model = mongoose.models[collectionName]
+    || mongoose.model(collectionName, schema, collectionName);
+  modelCache.set(collectionName, model);
+  return model;
 };
 
 // Helper function to get all application models
@@ -309,8 +449,12 @@ export const getAllApplicationModels = () => {
 
 // Helper function to check if jobId is supported
 export const isSupportedJobId = (jobId) => {
-  return COLLECTION_MAPPING.hasOwnProperty(jobId);
+  return Object.prototype.hasOwnProperty.call(COLLECTION_MAPPING, jobId);
 };
+
+assertRegistryMatchesMappings(COLLECTION_MAPPING);
+
+export { COLLECTION_MAPPING, SCHEMA_MAPPING };
 
 export default {
   getApplicationModel,
