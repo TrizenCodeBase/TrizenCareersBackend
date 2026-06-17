@@ -7,7 +7,7 @@ export const JOB_TITLES = {
   'TV-AIML-INT-2025-001': 'AIML Intern',
   'TV-AIML-INT-2026-001': 'AIML Intern',
   'TV-AI-AUT-2026-001': 'Associate AI & Automation Engineer',
-  'TV-AI-FS-2026-002': 'AI & Full Stack Intern',
+  'TV-AI-FS-2026-002': 'AI & Automation Engineer Intern (WhatsApp, AI Agents & Voice Automation)',
   'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
   'TV-WEB-MERN-2025-002': 'MERN Stack Developer Intern',
   'TV-WEB-MERN-2026-005': 'MERN Stack Developer Intern',
