@@ -49,6 +49,36 @@ const validateLogin = [
     .withMessage('Password is required')
 ];
 
+// Helper to call external mailer API
+async function sendOtpViaSupportService({ email, otp, firstName, expiryMins = 10 }) {
+  try {
+    const resp = await fetch('https://trizensupportemailservice.llp.trizenventures.com/api/support/send-otp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': process.env.MAILER_API_KEY || ''
+      },
+      body: JSON.stringify({
+        email,
+        otp,
+        firstName,
+        expiryMins
+      })
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`Mailer service returned ${resp.status}: ${text}`);
+    }
+
+    // parse response if needed by caller
+    return await resp.json().catch(() => ({}));
+  } catch (err) {
+    logger.error('Mailer service error:', err);
+    throw err;
+  }
+}
+
 // @desc    Register user
 // @route   POST /api/v1/users/register
 // @access  Public
@@ -80,7 +110,7 @@ router.post('/register', validateSignup, async (req, res) => {
       });
     }
 
-    // Create user
+    // Create user (password will be hashed via pre-save hook)
     const user = await User.create({
       username,
       email,
@@ -89,6 +119,23 @@ router.post('/register', validateSignup, async (req, res) => {
       lastName
     });
 
+    // Generate email verification code and save
+    const verificationCode = user.generateEmailVerificationCode();
+    await user.save();
+
+    // Send verification code email via support service (will log if fails)
+    try {
+      await sendOtpViaSupportService({
+        email: user.email,
+        otp: verificationCode,
+        firstName: user.firstName,
+        expiryMins: 10
+      });
+    } catch (mailErr) {
+      logger.error('Failed to send verification email via support service:', mailErr);
+      // Do not fail registration if email send fails; inform client
+    }
+
     // Generate token
     const token = generateToken(user._id);
 
@@ -96,7 +143,7 @@ router.post('/register', validateSignup, async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully',
+      message: 'User registered successfully. A verification code has been sent to the provided email.',
       data: {
         user: user.toJSON(),
         token
@@ -304,18 +351,9 @@ router.put('/profile', protect, [
     }
 
     const { firstName, lastName, email } = req.body;
-    const updateFields = {};
 
-    if (firstName) updateFields.firstName = firstName;
-    if (lastName) updateFields.lastName = lastName;
-    if (email) updateFields.email = email;
-
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
-      updateFields,
-      { new: true, runValidators: true }
-    );
-
+    // Load user and update fields, handle email change specially
+    const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -323,11 +361,43 @@ router.put('/profile', protect, [
       });
     }
 
+    if (firstName) user.firstName = firstName;
+    if (lastName) user.lastName = lastName;
+
+    if (email && (!user.isEmailVerified || email !== user.email)) {
+      // Ensure no other user has this email
+      const emailTaken = await User.findOne({ email });
+      if (emailTaken) {
+        return res.status(400).json({
+          success: false,
+          error: 'Email already in use by another account'
+        });
+      }
+
+      user.email = email;
+      // Generate verification code for the new email
+      const verificationCode = user.generateEmailVerificationCode();
+
+      // Attempt to send verification email via support service; log if fails
+      try {
+        await sendOtpViaSupportService({
+          email: user.email,
+          otp: verificationCode,
+          firstName: user.firstName,
+          expiryMins: 10
+        });
+      } catch (mailErr) {
+        logger.error('Failed to send verification email via support service on profile update:', mailErr);
+      }
+    }
+
+    await user.save();
+
     logger.info(`Profile updated for user: ${user.username}`);
 
     res.json({
       success: true,
-      message: 'Profile updated successfully',
+      message: email ? 'Profile updated. A verification code has been sent to the new email.' : 'Profile updated successfully',
       data: user
     });
   } catch (error) {
@@ -456,6 +526,88 @@ router.get('/', protect, authorize('admin'), async (req, res) => {
     });
   } catch (error) {
     logger.error('Get users error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error'
+    });
+  }
+});
+
+// @desc    Verify email
+// @route   POST /api/v1/users/verify-email
+// @access  Public
+router.post('/verify-email', [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email address'),
+  body('code')
+    .notEmpty()
+    .withMessage('Verification code is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array().map(error => ({
+          field: error.path,
+          message: error.msg
+        }))
+      });
+    }
+
+    const { email, code } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    if (user.isEmailVerified) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email is already verified'
+      });
+    }
+
+    if (!user.emailVerificationCode || !user.emailVerificationExpires) {
+      return res.status(400).json({
+        success: false,
+        error: 'No verification code found. Please request a new one.'
+      });
+    }
+
+    if (user.emailVerificationExpires.getTime() < Date.now()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Verification code has expired. Please request a new one.'
+      });
+    }
+
+    if (user.emailVerificationCode !== code) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid verification code'
+      });
+    }
+
+    user.isEmailVerified = true;
+    user.emailVerificationCode = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save();
+
+    logger.info(`Email verified for user: ${user.email}`);
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully'
+    });
+  } catch (error) {
+    logger.error('Email verification error:', error);
     res.status(500).json({
       success: false,
       error: 'Server error'

@@ -47,6 +47,16 @@ const userSchema = new mongoose.Schema({
   },
   lastLogin: {
     type: Date
+  },
+  isEmailVerified: {
+    type: Boolean,
+    default: false
+  },
+  emailVerificationCode: {
+    type: String
+  },
+  emailVerificationExpires: {
+    type: Date
   }
 }, {
   timestamps: true
@@ -72,10 +82,24 @@ userSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-// Method to get user info without password
+// Method to generate a numeric email verification code and expiry (default 10 minutes)
+userSchema.methods.generateEmailVerificationCode = function() {
+  // 6-digit numeric code
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expires = Date.now() + 10 * 60 * 1000; // 10 minutes
+  this.emailVerificationCode = code;
+  this.emailVerificationExpires = new Date(expires);
+  this.isEmailVerified = false;
+  return code;
+};
+
+// Method to get user info without sensitive fields
 userSchema.methods.toJSON = function() {
   const userObject = this.toObject();
   delete userObject.password;
+  // Remove verification fields from outward JSON
+  delete userObject.emailVerificationCode;
+  delete userObject.emailVerificationExpires;
   return userObject;
 };
 
