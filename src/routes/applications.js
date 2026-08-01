@@ -577,6 +577,134 @@ router.post('/', validateApplication, validateApplicationConditional, async (req
   }
 });
 
+// POST /api/v1/applications/lookup-emails - Validate which emails exist (admin bulk check)
+router.post('/lookup-emails', async (req, res) => {
+  try {
+    const rawEmails = Array.isArray(req.body?.emails)
+      ? req.body.emails
+      : String(req.body?.emails || '')
+          .split(/[,;\n\r\t ]+/)
+          .map((e) => e.trim());
+
+    const requested = [
+      ...new Set(
+        rawEmails
+          .map((e) => String(e || '').trim().toLowerCase())
+          .filter((e) => e.includes('@'))
+      )
+    ];
+
+    if (requested.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide at least one email to look up'
+      });
+    }
+
+    if (requested.length > 500) {
+      return res.status(400).json({
+        success: false,
+        error: 'Maximum 500 emails per lookup'
+      });
+    }
+
+    const { status, jobId } = req.body || {};
+    const query = {
+      email: { $in: requested }
+    };
+
+    if (status) query.status = status;
+
+    let applications = [];
+
+    if (jobId) {
+      if (!isSupportedJobId(jobId)) {
+        return res.status(400).json({
+          success: false,
+          error: `Unsupported job ID: ${jobId}`
+        });
+      }
+      const ApplicationModel = getApplicationModel(jobId);
+      applications = await ApplicationModel.find({ ...query, jobId })
+        .populate('appliedBy', 'username email firstName lastName role')
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec();
+    } else {
+      const allModels = getAllApplicationModels();
+      for (const { defaultJobId, model } of allModels) {
+        const docs = await model.find(query)
+          .populate('appliedBy', 'username email firstName lastName role')
+          .sort({ createdAt: -1 })
+          .lean()
+          .exec();
+        applications = applications.concat(
+          docs.map((app) => ({ ...app, jobId: app.jobId || defaultJobId }))
+        );
+      }
+      applications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    const foundSet = new Set(
+      applications.map((app) => String(app.email || '').trim().toLowerCase()).filter(Boolean)
+    );
+    const found = requested.filter((email) => foundSet.has(email));
+    const missing = requested.filter((email) => !foundSet.has(email));
+    const requestedSet = new Set(requested);
+
+    // Emails present in DB for the same filters, but not in the pasted list
+    const scopeQuery = {};
+    if (status) scopeQuery.status = status;
+
+    const scopedEmails = new Set();
+    if (jobId) {
+      const ApplicationModel = getApplicationModel(jobId);
+      const docs = await ApplicationModel.find({ ...scopeQuery, jobId })
+        .select('email')
+        .lean()
+        .exec();
+      docs.forEach((doc) => {
+        const email = String(doc.email || '').trim().toLowerCase();
+        if (email) scopedEmails.add(email);
+      });
+    } else {
+      const allModels = getAllApplicationModels();
+      for (const { model } of allModels) {
+        const docs = await model.find(scopeQuery).select('email').lean().exec();
+        docs.forEach((doc) => {
+          const email = String(doc.email || '').trim().toLowerCase();
+          if (email) scopedEmails.add(email);
+        });
+      }
+    }
+
+    const notInList = [...scopedEmails]
+      .filter((email) => !requestedSet.has(email))
+      .sort();
+
+    res.json({
+      success: true,
+      data: rewriteResumeLinks(applications),
+      lookup: {
+        requested,
+        found,
+        missing,
+        notInList,
+        foundCount: found.length,
+        missingCount: missing.length,
+        notInListCount: notInList.length,
+        applicationCount: applications.length
+      }
+    });
+  } catch (error) {
+    logger.error('Error looking up emails:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error'
+    });
+  }
+});
+
 // GET /api/v1/applications - Get all applications (public - no auth required)
 router.get('/', async (req, res) => {
   try {
@@ -587,6 +715,7 @@ router.get('/', async (req, res) => {
       status, 
       jobId,
       search,
+      emails,
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
@@ -598,14 +727,23 @@ router.get('/', async (req, res) => {
       query.status = status;
     }
 
-    // Search functionality
-    if (search) {
+    // Bulk email list (comma-separated) — exact match for validation
+    const emailList = String(emails || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter((e) => e.includes('@'));
+
+    if (emailList.length > 0) {
+      query.email = { $in: emailList };
+    } else if (search) {
+      // Escape regex special chars for safe partial search
+      const escaped = String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { fullName: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { location: { $regex: search, $options: 'i' } },
-        { degreeDiscipline: { $regex: search, $options: 'i' } },
-        { educationStatus: { $regex: search, $options: 'i' } }
+        { fullName: { $regex: escaped, $options: 'i' } },
+        { email: { $regex: escaped, $options: 'i' } },
+        { location: { $regex: escaped, $options: 'i' } },
+        { degreeDiscipline: { $regex: escaped, $options: 'i' } },
+        { educationStatus: { $regex: escaped, $options: 'i' } }
       ];
     }
 

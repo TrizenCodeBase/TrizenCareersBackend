@@ -21,21 +21,36 @@ dotenv.config();
 
 const app = express();
 
-// Connect to MongoDB
-const connectDB = async () => {
+// Connect to MongoDB (retry so CapRover/env timing does not leave us permanently disconnected)
+const connectDB = async (attempt = 1) => {
+  const maxAttempts = 10;
+  const delayMs = Math.min(30000, 2000 * attempt);
+
+  if (!process.env.MONGODB_URI) {
+    logger.error('MONGODB_URI environment variable is not set — API routes that need the DB will return 500/503');
+    return;
+  }
+
   try {
-    if (!process.env.MONGODB_URI) {
-      logger.error('MONGODB_URI environment variable is not set');
-      return;
-    }
-    
     await mongoose.connect(process.env.MONGODB_URI);
     logger.info('Connected to MongoDB');
   } catch (error) {
-    logger.error('MongoDB connection error:', error);
-    // Don't exit process, let the app run without DB for health checks
+    logger.error(`MongoDB connection error (attempt ${attempt}/${maxAttempts}):`, error.message || error);
+    if (attempt < maxAttempts) {
+      logger.info(`Retrying MongoDB connection in ${delayMs}ms...`);
+      setTimeout(() => connectDB(attempt + 1), delayMs);
+    } else {
+      logger.error('MongoDB connection failed after max retries. Check MONGODB_URI and network access from the container.');
+    }
   }
 };
+
+mongoose.connection.on('disconnected', () => {
+  logger.warn('MongoDB disconnected');
+});
+mongoose.connection.on('reconnected', () => {
+  logger.info('MongoDB reconnected');
+});
 
 connectDB();
 
@@ -140,14 +155,30 @@ app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/applications', applicationRoutes);
 app.use('/api/v1/support', supportRoutes);
 
-// Health check endpoint
+// Health check endpoint (process liveness). mongodb field is the real readiness signal.
 app.get('/api/health', (req, res) => {
-  res.json({
+  const mongoConnected = mongoose.connection.readyState === 1;
+  res.status(200).json({
     success: true,
-    message: 'Server is running',
+    message: mongoConnected ? 'Server is running' : 'Server is running but MongoDB is disconnected',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    mongodb: mongoConnected ? 'connected' : 'disconnected',
+    mongodbUriConfigured: Boolean(process.env.MONGODB_URI)
+  });
+});
+
+// Fail fast with a clear error when DB-backed routes are hit without Mongo
+app.use('/api/v1', (req, res, next) => {
+  if (mongoose.connection.readyState === 1) return next();
+  // Routes that do not need Mongo (e.g. supported-jobs list is static)
+  if (req.path === '/applications/supported-jobs') return next();
+  return res.status(503).json({
+    success: false,
+    error: 'Database unavailable',
+    details: process.env.MONGODB_URI
+      ? 'MongoDB is disconnected. Check MONGODB_URI and that the database is reachable from this container.'
+      : 'MONGODB_URI is not set in the CapRover app environment variables.'
   });
 });
 

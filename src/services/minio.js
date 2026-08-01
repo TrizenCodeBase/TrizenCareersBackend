@@ -53,10 +53,16 @@ function normalizePort(value) {
   return String(asNumber);
 }
 
+function defaultPortForProtocol(protocol) {
+  // CapRover public MinIO is usually HTTPS on 443 (nginx → container :9000).
+  // Direct/internal MinIO (http://srv-captain--minio) uses API port 9000.
+  return protocol === 'https' ? '443' : '9000';
+}
+
 function parseEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
   let protocol = useSSL ? 'https' : 'http';
   let host = 'localhost';
-  let port = normalizePort(rawPort) || normalizePort(apiPort) || '9000';
+  let port = normalizePort(rawPort) || normalizePort(apiPort) || defaultPortForProtocol(protocol);
 
   if (rawEndpoint && typeof rawEndpoint === 'string') {
     const raw = rawEndpoint.trim();
@@ -68,20 +74,24 @@ function parseEndpoint(rawEndpoint, rawPort, apiPort, useSSL) {
         // url.port is '' when the URL uses the default port for that protocol
         if (url.port) {
           port = url.port;
-        } else if (apiPort) {
-          port = String(apiPort).trim();
+        } else if (normalizePort(apiPort) || normalizePort(rawPort)) {
+          port = normalizePort(apiPort) || normalizePort(rawPort);
         } else {
-          port = '9000';
+          port = defaultPortForProtocol(protocol);
         }
       } else {
         // Handles "host" and "host:port" formats.
         const hostPortMatch = raw.match(/^([^/:]+)(?::(\d+))?$/);
         if (hostPortMatch) {
           host = hostPortMatch[1] || host;
-          port = normalizePort(hostPortMatch[2]) || normalizePort(rawPort) || normalizePort(apiPort) || '9000';
+          port =
+            normalizePort(hostPortMatch[2]) ||
+            normalizePort(rawPort) ||
+            normalizePort(apiPort) ||
+            defaultPortForProtocol(protocol);
         } else {
           host = raw;
-          port = normalizePort(rawPort) || normalizePort(apiPort) || '9000';
+          port = normalizePort(rawPort) || normalizePort(apiPort) || defaultPortForProtocol(protocol);
         }
       }
     } catch (e) {
@@ -101,9 +111,11 @@ function getS3Client() {
   const useSSL = (process.env.MINIO_USE_SSL || '').toLowerCase() === 'true';
 
   const { protocol, host, port } = parseEndpoint(rawEndpoint, rawPort, apiPort, useSSL);
-  // Build canonical endpoint string and wrap in AWS.Endpoint so SDK correctly
-  // extracts host + port even for non-standard Docker service hostnames.
-  const endpointStr = `${protocol}://${host}:${port}`;
+  // Omit standard ports in the URL so CapRover HTTPS (443) is not forced to :9000.
+  const endpointStr =
+    (protocol === 'https' && port === '443') || (protocol === 'http' && port === '80')
+      ? `${protocol}://${host}`
+      : `${protocol}://${host}:${port}`;
   const awsEndpoint = new AWS.Endpoint(endpointStr);
 
   const accessKeyId = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || '';
@@ -129,6 +141,7 @@ function getS3Client() {
     signatureVersion: 'v4',
     region,
     sslEnabled: protocol === 'https',
+    httpOptions: { timeout: 15000, connectTimeout: 8000 },
   });
 
   return s3Client;
@@ -377,12 +390,22 @@ export async function getResumeStream(bucket, key) {
           const stream = fallbackS3.getObject({ Bucket: bucket, Key: key }).createReadStream();
           return { stream, contentType, contentLength };
         } catch (fallbackErr) {
-          logger.warn('MinIO getResumeStream fallback failed', { bucket, key, error: fallbackErr.message });
+          logger.warn('MinIO getResumeStream fallback failed', {
+            bucket,
+            key,
+            code: fallbackErr.code || fallbackErr.statusCode,
+            error: fallbackErr.message || String(fallbackErr),
+          });
           return null;
         }
       }
     }
-    logger.warn('MinIO getResumeStream failed', { bucket, key, error: err.message });
+    logger.warn('MinIO getResumeStream failed', {
+      bucket,
+      key,
+      code: err.code || err.statusCode,
+      error: err.message || String(err),
+    });
     return null;
   }
 }
