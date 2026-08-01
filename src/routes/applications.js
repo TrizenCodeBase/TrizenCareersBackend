@@ -18,6 +18,12 @@ import {
   requiresYearOfPassingOut,
   getJobTitle
 } from '../config/jobRegistry.js';
+import {
+  APPLICATION_STATUSES,
+  INTERVIEW_STATUSES,
+  emptyStatusBreakdown,
+  pipelineFieldsForStatus
+} from '../config/applicationStatus.js';
 import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
@@ -37,6 +43,77 @@ function rewriteResumeLinks(appOrList) {
     return doc;
   };
   return Array.isArray(appOrList) ? appOrList.map(rewrite) : rewrite(appOrList);
+}
+
+/** Attach all roles each candidate applied to (by email) for list/detail UX. */
+async function enrichApplicationsWithAppliedRoles(applications) {
+  if (!Array.isArray(applications) || applications.length === 0) return applications;
+
+  const emails = [
+    ...new Set(
+      applications
+        .map((app) => String(app.email || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  ];
+  if (emails.length === 0) return applications;
+
+  const allModels = getAllApplicationModels();
+  const rolesByEmail = new Map();
+
+  for (const { defaultJobId, model } of allModels) {
+    const docs = await model
+      .find({ email: { $in: emails } })
+      .select('_id email jobId status createdAt')
+      .lean()
+      .exec();
+
+    for (const doc of docs) {
+      const email = String(doc.email || '').trim().toLowerCase();
+      if (!email) continue;
+      if (!rolesByEmail.has(email)) rolesByEmail.set(email, []);
+      rolesByEmail.get(email).push({
+        _id: String(doc._id),
+        jobId: doc.jobId || defaultJobId,
+        status: doc.status,
+        createdAt: doc.createdAt
+      });
+    }
+  }
+
+  for (const [, roles] of rolesByEmail) {
+    // Dedupe by application id, keep newest first
+    const seen = new Set();
+    const unique = [];
+    roles
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .forEach((role) => {
+        if (seen.has(role._id)) return;
+        seen.add(role._id);
+        unique.push(role);
+      });
+    roles.length = 0;
+    roles.push(...unique);
+  }
+
+  return applications.map((app) => {
+    const email = String(app.email || '').trim().toLowerCase();
+    const appliedRoles = rolesByEmail.get(email) || [
+      {
+        _id: String(app._id),
+        jobId: app.jobId,
+        status: app.status,
+        createdAt: app.createdAt
+      }
+    ];
+    const otherRoles = appliedRoles.filter((role) => String(role._id) !== String(app._id));
+    return {
+      ...app,
+      appliedRoles,
+      roleCount: appliedRoles.length,
+      otherRoles
+    };
+  });
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -682,9 +759,11 @@ router.post('/lookup-emails', async (req, res) => {
       .filter((email) => !requestedSet.has(email))
       .sort();
 
+    const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(applications));
+
     res.json({
       success: true,
-      data: rewriteResumeLinks(applications),
+      data: enriched,
       lookup: {
         requested,
         found,
@@ -710,8 +789,6 @@ router.get('/', async (req, res) => {
   try {
 
     const { 
-      page = 1, 
-      limit = 10, 
       status, 
       jobId,
       search,
@@ -719,6 +796,9 @@ router.get('/', async (req, res) => {
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
+
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '10'), 10) || 10));
 
     const query = {};
 
@@ -764,33 +844,33 @@ router.get('/', async (req, res) => {
       const applications = await ApplicationModel.find(jobQuery)
         .populate('appliedBy', 'username email firstName lastName role')
         .sort(sortOptions)
-        .limit(limit * 1)
+        .limit(limit)
         .skip((page - 1) * limit)
         .lean()
         .exec();
 
       const total = await ApplicationModel.countDocuments(jobQuery);
+      const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(applications));
 
       return res.json({
         success: true,
-        data: rewriteResumeLinks(applications),
+        data: enriched,
         pagination: {
           currentPage: page,
-          totalPages: Math.ceil(total / limit),
+          totalPages: Math.max(1, Math.ceil(total / limit)),
           totalApplications: total,
           hasNextPage: page * limit < total,
           hasPrevPage: page > 1
         }
       });
     } else {
-      // Get from all collections
-      const { getAllApplicationModels } = await import('../models/ApplicationFactory.js');
+      // Get from all collections, then sort + paginate in memory
       const allModels = getAllApplicationModels();
       
       let allApplications = [];
       let totalApplications = 0;
 
-      for (const { collectionName, defaultJobId, model } of allModels) {
+      for (const { defaultJobId, model } of allModels) {
         const applications = await model.find(query)
           .populate('appliedBy', 'username email firstName lastName role')
           .sort(sortOptions)
@@ -807,29 +887,37 @@ router.get('/', async (req, res) => {
         totalApplications += await model.countDocuments(query);
       }
 
-      // Sort all applications
+      // Sort all applications (handle dates correctly)
       allApplications.sort((a, b) => {
         const aValue = a[sortBy];
         const bValue = b[sortBy];
-        
+
+        const aTime = aValue instanceof Date || (typeof aValue === 'string' && !Number.isNaN(Date.parse(aValue)))
+          ? new Date(aValue).getTime()
+          : aValue;
+        const bTime = bValue instanceof Date || (typeof bValue === 'string' && !Number.isNaN(Date.parse(bValue)))
+          ? new Date(bValue).getTime()
+          : bValue;
+
+        if (aTime === bTime) return 0;
         if (sortOrder === 'desc') {
-          return bValue > aValue ? 1 : -1;
-        } else {
-          return aValue > bValue ? 1 : -1;
+          return aTime > bTime ? -1 : 1;
         }
+        return aTime > bTime ? 1 : -1;
       });
 
-      // Apply pagination
+      // Apply pagination with numeric indexes (page/limit must be numbers — string concat broke this)
       const startIndex = (page - 1) * limit;
       const endIndex = startIndex + limit;
       const paginatedApplications = allApplications.slice(startIndex, endIndex);
+      const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(paginatedApplications));
 
       return res.json({
         success: true,
-        data: rewriteResumeLinks(paginatedApplications),
+        data: enriched,
         pagination: {
           currentPage: page,
-          totalPages: Math.ceil(totalApplications / limit),
+          totalPages: Math.max(1, Math.ceil(totalApplications / limit)),
           totalApplications,
           hasNextPage: page * limit < totalApplications,
           hasPrevPage: page > 1
@@ -890,20 +978,18 @@ router.get('/my', protect, async (req, res) => {
 
 // Helper function to find application by ID across all collections
 const findApplicationById = async (applicationId) => {
-  const { getAllApplicationModels } = await import('../models/ApplicationFactory.js');
   const allModels = getAllApplicationModels();
-  
-  for (const { jobId, model } of allModels) {
+
+  for (const { defaultJobId, model } of allModels) {
     try {
       const application = await model.findById(applicationId)
         .populate('appliedBy', 'username email firstName lastName role')
         .lean();
-      
+
       if (application) {
-        // Add jobId to the application for identification
         return {
           ...application,
-          jobId
+          jobId: application.jobId || defaultJobId
         };
       }
     } catch (error) {
@@ -911,8 +997,34 @@ const findApplicationById = async (applicationId) => {
       continue;
     }
   }
-  
+
   return null;
+};
+
+const findApplicationsByEmail = async (email) => {
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!normalized) return [];
+
+  const allModels = getAllApplicationModels();
+  let applications = [];
+
+  for (const { defaultJobId, model } of allModels) {
+    const docs = await model.find({ email: normalized })
+      .select('_id jobId status createdAt updatedAt fullName email adminRemarks adminRecordings')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    applications = applications.concat(
+      docs.map((app) => ({
+        ...app,
+        jobId: app.jobId || defaultJobId
+      }))
+    );
+  }
+
+  applications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return applications;
 };
 
 // GET /api/v1/applications/:id - Get specific application
@@ -935,12 +1047,152 @@ router.get('/:id', protect, async (req, res) => {
       });
     }
 
+    const relatedApplications =
+      req.user.role === 'admin'
+        ? await findApplicationsByEmail(application.email)
+        : [];
+
     res.json({
       success: true,
-      data: rewriteResumeLinks(application)
+      data: rewriteResumeLinks(application),
+      relatedApplications: relatedApplications.map((app) => ({
+        _id: app._id,
+        jobId: app.jobId,
+        status: app.status,
+        createdAt: app.createdAt,
+        updatedAt: app.updatedAt,
+        fullName: app.fullName,
+        email: app.email,
+        hasRemarks: Boolean(app.adminRemarks && String(app.adminRemarks).trim()),
+        recordingsCount: Array.isArray(app.adminRecordings) ? app.adminRecordings.length : 0
+      }))
     });
   } catch (error) {
     logger.error('Error fetching application:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error'
+    });
+  }
+});
+
+// PUT /api/v1/applications/:id/admin-notes - Update remarks + recordings (admin only)
+router.put('/:id/admin-notes', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Admin privileges required.'
+      });
+    }
+
+    const application = await findApplicationById(req.params.id);
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        error: 'Application not found'
+      });
+    }
+
+    const ApplicationModel = getApplicationModel(application.jobId);
+    const updateData = {};
+
+    if (typeof req.body.adminRemarks === 'string') {
+      updateData.adminRemarks = req.body.adminRemarks;
+    }
+
+    if (typeof req.body.source === 'string') {
+      updateData.source = req.body.source.trim();
+    }
+
+    if (typeof req.body.githubPortfolio === 'string') {
+      updateData.githubPortfolio = req.body.githubPortfolio.trim();
+    }
+
+    if (typeof req.body.interviewRecordingLink === 'string') {
+      updateData.interviewRecordingLink = req.body.interviewRecordingLink.trim();
+    }
+
+    if (typeof req.body.assignmentSent === 'boolean') {
+      updateData.assignmentSent = req.body.assignmentSent;
+      updateData.assignmentSentAt = req.body.assignmentSent
+        ? (req.body.assignmentSentAt ? new Date(req.body.assignmentSentAt) : new Date())
+        : null;
+    }
+
+    if (typeof req.body.assignmentReceived === 'boolean') {
+      updateData.assignmentReceived = req.body.assignmentReceived;
+      updateData.assignmentReceivedAt = req.body.assignmentReceived
+        ? (req.body.assignmentReceivedAt ? new Date(req.body.assignmentReceivedAt) : new Date())
+        : null;
+    }
+
+    if (typeof req.body.interviewLinkSent === 'boolean') {
+      updateData.interviewLinkSent = req.body.interviewLinkSent;
+      updateData.interviewLinkSentAt = req.body.interviewLinkSent
+        ? (req.body.interviewLinkSentAt ? new Date(req.body.interviewLinkSentAt) : new Date())
+        : null;
+    }
+
+    if (req.body.interviewScheduledDate !== undefined) {
+      if (req.body.interviewScheduledDate === null || req.body.interviewScheduledDate === '') {
+        updateData.interviewScheduledDate = null;
+      } else {
+        const parsed = new Date(req.body.interviewScheduledDate);
+        if (Number.isNaN(parsed.getTime())) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid interviewScheduledDate'
+          });
+        }
+        updateData.interviewScheduledDate = parsed;
+      }
+    }
+
+    if (typeof req.body.interviewStatus === 'string') {
+      if (!INTERVIEW_STATUSES.includes(req.body.interviewStatus)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid interviewStatus. Allowed: ${INTERVIEW_STATUSES.join(', ')}`
+        });
+      }
+      updateData.interviewStatus = req.body.interviewStatus;
+    }
+
+    if (Array.isArray(req.body.adminRecordings)) {
+      updateData.adminRecordings = req.body.adminRecordings
+        .filter((item) => item && typeof item.url === 'string' && item.url.trim())
+        .map((item) => ({
+          url: String(item.url).trim(),
+          label: typeof item.label === 'string' ? item.label.trim() : '',
+          note: typeof item.note === 'string' ? item.note.trim() : '',
+          createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
+          createdBy: item.createdBy || req.user._id || null
+        }));
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide hiring tracker fields and/or adminRemarks / adminRecordings'
+      });
+    }
+
+    const updatedApplication = await ApplicationModel.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true }
+    ).populate('appliedBy', 'username email firstName lastName role');
+
+    logger.info(`Admin notes updated for application ${req.params.id}`);
+
+    res.json({
+      success: true,
+      message: 'Admin notes updated successfully',
+      data: rewriteResumeLinks(updatedApplication.toObject ? updatedApplication.toObject() : updatedApplication)
+    });
+  } catch (error) {
+    logger.error('Error updating admin notes:', error);
     res.status(500).json({
       success: false,
       error: 'Server error'
@@ -960,10 +1212,10 @@ router.put('/:id/status', protect, async (req, res) => {
 
     const { status } = req.body;
 
-    if (!['pending', 'reviewed', 'shortlisted', 'rejected', 'accepted'].includes(status)) {
+    if (!APPLICATION_STATUSES.includes(status)) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid status value'
+        error: `Invalid status value. Allowed: ${APPLICATION_STATUSES.join(', ')}`
       });
     }
 
@@ -984,7 +1236,10 @@ router.put('/:id/status', protect, async (req, res) => {
     const oldStatus = application.status;
     
     // Prepare update object
-    const updateData = { status };
+    const updateData = {
+      status,
+      ...pipelineFieldsForStatus(status, application)
+    };
     
     // If status is changing, reset email tracking so fresh emails can be sent
     if (oldStatus !== status) {
@@ -1010,10 +1265,23 @@ router.put('/:id/status', protect, async (req, res) => {
 
     logger.info(`Application status updated: ${updatedApplication._id} from ${oldStatus} to ${status}`);
 
+    const relatedApplications = await findApplicationsByEmail(updatedApplication.email);
+
     res.json({
       success: true,
       message: 'Application status updated successfully',
-      data: updatedApplication
+      data: updatedApplication,
+      relatedApplications: relatedApplications.map((app) => ({
+        _id: app._id,
+        jobId: app.jobId,
+        status: app.status,
+        createdAt: app.createdAt,
+        updatedAt: app.updatedAt,
+        fullName: app.fullName,
+        email: app.email,
+        hasRemarks: Boolean(app.adminRemarks && String(app.adminRemarks).trim()),
+        recordingsCount: Array.isArray(app.adminRecordings) ? app.adminRecordings.length : 0
+      }))
     });
   } catch (error) {
     logger.error('Error updating application status:', error);
@@ -1092,13 +1360,7 @@ router.get('/candidates', protect, async (req, res) => {
       }
     ]);
 
-    const statusCounts = {
-      pending: 0,
-      reviewed: 0,
-      shortlisted: 0,
-      rejected: 0,
-      accepted: 0
-    };
+    const statusCounts = emptyStatusBreakdown();
 
     stats.forEach(stat => {
       statusCounts[stat._id] = stat.count;
@@ -1143,13 +1405,7 @@ router.get('/stats/overview', protect, async (req, res) => {
     
     let totalApplications = 0;
     let recentApplications = 0;
-    const statusCounts = {
-      pending: 0,
-      reviewed: 0,
-      shortlisted: 0,
-      rejected: 0,
-      accepted: 0
-    };
+    const statusCounts = emptyStatusBreakdown();
 
     // Aggregate stats across all job application collections
     for (const { model } of allModels) {
@@ -1173,6 +1429,8 @@ router.get('/stats/overview', protect, async (req, res) => {
       stats.forEach(stat => {
         if (statusCounts[stat._id] !== undefined) {
           statusCounts[stat._id] += stat.count;
+        } else {
+          statusCounts[stat._id] = stat.count;
         }
       });
     }

@@ -50,9 +50,110 @@ const baseApplicationSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'reviewed', 'shortlisted', 'rejected', 'accepted'],
+    enum: [
+      'pending',
+      'reviewed',
+      'shortlisted',
+      'assignment_sent',
+      'assignment_received',
+      'interview_link_sent',
+      'interview_scheduled',
+      'rejected',
+      'accepted'
+    ],
     default: 'pending'
   },
+  // Hiring pipeline tracker (admin)
+  source: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  githubPortfolio: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  assignmentSent: {
+    type: Boolean,
+    default: false
+  },
+  assignmentSentAt: {
+    type: Date,
+    default: null
+  },
+  assignmentReceived: {
+    type: Boolean,
+    default: false
+  },
+  assignmentReceivedAt: {
+    type: Date,
+    default: null
+  },
+  interviewLinkSent: {
+    type: Boolean,
+    default: false
+  },
+  interviewLinkSentAt: {
+    type: Date,
+    default: null
+  },
+  interviewScheduledDate: {
+    type: Date,
+    default: null
+  },
+  interviewStatus: {
+    type: String,
+    enum: [
+      'not_scheduled',
+      'scheduled',
+      'completed',
+      'no_show',
+      'cancelled',
+      'selected',
+      'rejected'
+    ],
+    default: 'not_scheduled'
+  },
+  interviewRecordingLink: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  // Admin-only notes (per application / role)
+  adminRemarks: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  adminRecordings: [
+    {
+      url: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      label: {
+        type: String,
+        default: '',
+        trim: true
+      },
+      note: {
+        type: String,
+        default: '',
+        trim: true
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now
+      },
+      createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null
+      }
+    }
+  ],
   // Email tracking fields
   emailSent: {
     type: Boolean,

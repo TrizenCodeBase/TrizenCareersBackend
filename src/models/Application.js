@@ -121,8 +121,53 @@ const applicationSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'reviewed', 'shortlisted', 'rejected', 'accepted'],
+    enum: [
+      'pending',
+      'reviewed',
+      'shortlisted',
+      'assignment_sent',
+      'assignment_received',
+      'interview_link_sent',
+      'interview_scheduled',
+      'rejected',
+      'accepted'
+    ],
     default: 'pending'
+  },
+  source: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  githubPortfolio: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  assignmentSent: { type: Boolean, default: false },
+  assignmentSentAt: { type: Date, default: null },
+  assignmentReceived: { type: Boolean, default: false },
+  assignmentReceivedAt: { type: Date, default: null },
+  interviewLinkSent: { type: Boolean, default: false },
+  interviewLinkSentAt: { type: Date, default: null },
+  interviewScheduledDate: { type: Date, default: null },
+  interviewStatus: {
+    type: String,
+    enum: [
+      'not_scheduled',
+      'scheduled',
+      'completed',
+      'no_show',
+      'cancelled',
+      'selected',
+      'rejected'
+    ],
+    default: 'not_scheduled'
+  },
+  interviewRecordingLink: {
+    type: String,
+    default: '',
+    trim: true
   },
   appliedBy: {
     type: mongoose.Schema.Types.ObjectId,
