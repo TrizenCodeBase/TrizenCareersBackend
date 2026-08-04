@@ -28,17 +28,22 @@ import { protect } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 import fetch from 'node-fetch';
 import { fileURLToPath } from 'url';
-import { isMinioConfigured, uploadResume as uploadResumeToMinio, getResumeObjectUrl, extractKeyFromResumeLink, getResumeStream } from '../services/minio.js';
+import { isMinioConfigured, uploadResume as uploadResumeToMinio, extractKeyFromResumeLink, getResumeStream } from '../services/minio.js';
 
 const RESUME_BUCKET = (process.env.MINIO_BUCKET || 'careers-resumes').toLowerCase();
 
-function rewriteResumeLinks(appOrList) {
+function buildResumeProxyUrl(key, req) {
+  if (!key) return '';
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  return `${baseUrl}/api/v1/applications/resume?key=${encodeURIComponent(key)}`;
+}
+
+function rewriteResumeLinks(appOrList, req) {
   const rewrite = (doc) => {
     if (!doc || !doc.resumeLink) return doc;
     const key = extractKeyFromResumeLink(doc.resumeLink);
-    if (key && isMinioConfigured()) {
-      const url = getResumeObjectUrl(RESUME_BUCKET, key);
-      if (url) doc.resumeLink = url;
+    if (key && isMinioConfigured() && req) {
+      doc.resumeLink = buildResumeProxyUrl(key, req);
     }
     return doc;
   };
@@ -446,7 +451,8 @@ router.post('/upload-resume', (req, res, next) => {
           MINIO_BUCKET: process.env.MINIO_BUCKET,
         });
         const objectName = makeResumeObjectName(req.file.originalname);
-        const { url } = await uploadResumeToMinio(req.file.buffer, objectName, req.file.mimetype);
+        await uploadResumeToMinio(req.file.buffer, objectName, req.file.mimetype);
+        const url = buildResumeProxyUrl(objectName, req);
         logger.info('Resume uploaded to MinIO:', { objectName, user: req.user?._id });
         return res.status(200).json({
           success: true,
@@ -759,7 +765,7 @@ router.post('/lookup-emails', async (req, res) => {
       .filter((email) => !requestedSet.has(email))
       .sort();
 
-    const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(applications));
+    const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(applications, req));
 
     res.json({
       success: true,
@@ -850,7 +856,7 @@ router.get('/', async (req, res) => {
         .exec();
 
       const total = await ApplicationModel.countDocuments(jobQuery);
-      const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(applications));
+      const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(applications, req));
 
       return res.json({
         success: true,
@@ -910,7 +916,7 @@ router.get('/', async (req, res) => {
       const startIndex = (page - 1) * limit;
       const endIndex = startIndex + limit;
       const paginatedApplications = allApplications.slice(startIndex, endIndex);
-      const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(paginatedApplications));
+      const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(paginatedApplications, req));
 
       return res.json({
         success: true,
@@ -958,7 +964,7 @@ router.get('/my', protect, async (req, res) => {
 
     res.json({
       success: true,
-      data: rewriteResumeLinks(applications),
+      data: rewriteResumeLinks(applications, req),
       pagination: {
         currentPage: page,
         totalPages: Math.ceil(total / limit),
@@ -1054,7 +1060,7 @@ router.get('/:id', protect, async (req, res) => {
 
     res.json({
       success: true,
-      data: rewriteResumeLinks(application),
+      data: rewriteResumeLinks(application, req),
       relatedApplications: relatedApplications.map((app) => ({
         _id: app._id,
         jobId: app.jobId,
@@ -1189,7 +1195,7 @@ router.put('/:id/admin-notes', protect, async (req, res) => {
     res.json({
       success: true,
       message: 'Admin notes updated successfully',
-      data: rewriteResumeLinks(updatedApplication.toObject ? updatedApplication.toObject() : updatedApplication)
+      data: rewriteResumeLinks(updatedApplication.toObject ? updatedApplication.toObject() : updatedApplication, req)
     });
   } catch (error) {
     logger.error('Error updating admin notes:', error);
@@ -1368,7 +1374,7 @@ router.get('/candidates', protect, async (req, res) => {
 
     res.json({
       success: true,
-      data: rewriteResumeLinks(applications),
+      data: rewriteResumeLinks(applications, req),
       statistics: {
         totalCandidates: total,
         statusBreakdown: statusCounts
