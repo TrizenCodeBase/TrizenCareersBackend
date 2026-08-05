@@ -230,6 +230,111 @@ const aimlApplicationSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// GenAI & Multi-Agent Systems contract role schema.
+// Compensation is a monthly contract rate, so the stipend/motivation base fields do not apply.
+const { expectedStipend: _stipendField, motivation: _motivationField, ...contractBaseFields } =
+  baseApplicationSchema.obj;
+
+const genAiApplicationSchema = new mongoose.Schema({
+  ...contractBaseFields,
+  resumeLink: {
+    type: String,
+    required: [true, 'Resume link is required'],
+    trim: true
+  },
+  portfolioUrl: {
+    type: String,
+    required: [true, 'GitHub or portfolio link is required'],
+    trim: true
+  },
+  totalAiExperience: {
+    type: String,
+    required: [true, 'Total AI/ML experience is required'],
+    trim: true
+  },
+  agenticExperience: {
+    type: String,
+    required: [true, 'Agentic systems experience is required'],
+    trim: true
+  },
+  currentTitle: {
+    type: String,
+    required: [true, 'Current job title is required'],
+    trim: true
+  },
+  currentCompany: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  highestDegree: {
+    type: String,
+    required: [true, 'Highest qualification is required'],
+    trim: true
+  },
+  availabilityToStart: {
+    type: String,
+    required: [true, 'Start availability is required'],
+    trim: true
+  },
+  agentFrameworks: {
+    type: [String],
+    default: []
+  },
+  llmPlatforms: {
+    type: [String],
+    default: []
+  },
+  vectorDatabases: {
+    type: [String],
+    default: []
+  },
+  planningApproaches: {
+    type: [String],
+    default: []
+  },
+  cloudPlatform: {
+    type: String,
+    required: [true, 'Cloud platform is required'],
+    trim: true
+  },
+  devopsProficiency: {
+    type: String,
+    required: [true, 'Docker/Kubernetes/CI-CD level is required'],
+    trim: true
+  },
+  systemExperience: {
+    type: String,
+    required: [true, 'RAG or multi-agent system experience is required'],
+    trim: true
+  },
+  timezone: {
+    type: String,
+    required: [true, 'Working timezone is required'],
+    trim: true
+  },
+  contractCommitment: {
+    type: String,
+    required: [true, '3-month contract availability is required'],
+    trim: true
+  },
+  expectedMonthlyRate: {
+    type: String,
+    required: [true, 'Expected rate per month is required'],
+    trim: true
+  },
+  applicationSource: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  coverNote: {
+    type: String,
+    default: '',
+    trim: true
+  }
+}, { timestamps: true });
+
 // MERN Stack Developer Intern specific schema
 const mernApplicationSchema = new mongoose.Schema({
   ...baseApplicationSchema.obj,
@@ -474,6 +579,7 @@ const contentSocialMediaApplicationSchema = new mongoose.Schema({
 const COLLECTION_MAPPING = {
   'TV-AIML-INT-2025-001': 'aiml_applications',
   'TV-AIML-INT-2026-001': 'aiml_applications',
+  'TV-AI-GEN-2026-009': 'ai_genai_applications',
   'TV-AI-AUT-2026-001': 'ai_automation_applications',
   'TV-AI-FS-2026-002': 'ai_fullstack_applications',
   'TV-WEB-MERN-2025-005': 'mern_applications',
@@ -494,6 +600,7 @@ const COLLECTION_MAPPING = {
 const SCHEMA_MAPPING = {
   'TV-AIML-INT-2025-001': aimlApplicationSchema,
   'TV-AIML-INT-2026-001': aimlApplicationSchema,
+  'TV-AI-GEN-2026-009': genAiApplicationSchema,
   'TV-AI-AUT-2026-001': aimlApplicationSchema,
   'TV-AI-FS-2026-002': aimlApplicationSchema,
   'TV-WEB-MERN-2025-005': mernApplicationSchema,

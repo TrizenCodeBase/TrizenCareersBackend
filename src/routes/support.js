@@ -12,13 +12,14 @@ router.post('/send-email', async (req, res) => {
   try {
     const emailServiceUrl = process.env.EMAIL_SERVICE_URL || process.env.VITE_EMAIL_SERVICE_URL || 'https://trizensupportemailservice.llp.trizenventures.com';
     const apiKey = process.env.EMAIL_SERVICE_API_KEY || process.env.VITE_EMAIL_SERVICE_API_KEY || 'trizen-support-email-2024-secure-key-xyz789';
+    const targetUrl = `${emailServiceUrl.replace(/\/$/, '')}/api/support/send-custom`;
 
     logger.info('Proxying email request to support service:', {
-      url: `${emailServiceUrl}/api/support/send-custom`,
+      url: targetUrl,
       recipient: req.body.clientEmail
     });
 
-    const response = await fetch(`${emailServiceUrl}/api/support/send-custom`, {
+    const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -27,8 +28,24 @@ router.post('/send-email', async (req, res) => {
       body: JSON.stringify(req.body)
     });
 
-    const data = await response.json();
-    
+    const rawBody = await response.text();
+    let data;
+
+    try {
+      data = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      logger.error('Email service returned non-JSON response:', {
+        status: response.status,
+        contentType: response.headers.get('content-type'),
+        bodyPreview: rawBody.slice(0, 200)
+      });
+      return res.status(502).json({
+        success: false,
+        message: 'Email service returned an unexpected response (not JSON). Check EMAIL_SERVICE_URL and that the support email service is healthy.',
+        status: response.status
+      });
+    }
+
     if (!response.ok) {
       logger.error('Email service responded with error:', {
         status: response.status,
