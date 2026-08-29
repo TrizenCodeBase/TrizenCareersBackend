@@ -1,8 +1,7 @@
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import User from '../models/User.js';
+import { connectMongo } from '../config/mongodb.js';
 
-// Load environment variables
 dotenv.config();
 
 const createAdmin = async () => {
@@ -13,7 +12,7 @@ const createAdmin = async () => {
       process.exit(1);
     }
 
-    await mongoose.connect(process.env.MONGODB_URI);
+    await connectMongo();
     console.log('✅ Connected to MongoDB');
 
     // Get admin details from command line arguments or use defaults

@@ -8,6 +8,7 @@ import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import { configureMongoDns, mongoClientOptions } from './config/mongodb.js';
 import userRoutes from './routes/users.js';
 import applicationRoutes from './routes/applications.js';
 import supportRoutes from './routes/support.js';
@@ -18,6 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 dotenv.config();
+configureMongoDns();
 
 const app = express();
 
@@ -32,7 +34,7 @@ const connectDB = async (attempt = 1) => {
   }
 
   try {
-    await mongoose.connect(process.env.MONGODB_URI);
+    await mongoose.connect(process.env.MONGODB_URI, mongoClientOptions);
     logger.info('Connected to MongoDB');
   } catch (error) {
     logger.error(`MongoDB connection error (attempt ${attempt}/${maxAttempts}):`, error.message || error);
@@ -75,6 +77,7 @@ const defaultOrigins = [
   'http://localhost:5173',  // Vite default port
   'http://localhost:5174',
   'http://localhost:8080',
+  'http://localhost:8081',  // Vite fallback when 8080 is in use
   'http://192.168.1.8:3001', // LAN access (e.g. Careers Admin from another device)
   'https://careers.trizenventures.com',
   'https://careersadminfrontend.llp.trizenventures.com',
@@ -147,8 +150,16 @@ app.use(morgan('combined', {
 // Compression middleware
 app.use(compression());
 
-// Serve uploaded resume files (public read for application review)
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Serve uploaded resume files (public read for application review).
+// Served inline so the admin dashboard can preview resumes instead of downloading them.
+app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.toLowerCase().endsWith('.pdf')) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline');
+    }
+  }
+}));
 
 // API Routes
 app.use('/api/v1/users', userRoutes);
@@ -233,10 +244,20 @@ app.use('*', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+});
+
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    logger.error(
+      `Port ${PORT} is already in use. Stop the other backend instance, or run: Get-NetTCPConnection -LocalPort ${PORT} | Select OwningProcess`
+    );
+    process.exit(1);
+  }
+  throw error;
 });
 
 export default app;

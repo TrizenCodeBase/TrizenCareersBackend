@@ -6,6 +6,7 @@
 export const JOB_TITLES = {
   'TV-AIML-INT-2025-001': 'AIML Intern',
   'TV-AIML-INT-2026-001': 'AIML Intern',
+  'TV-AI-GEN-2026-009': 'AI Engineer – GenAI & Multi-Agent Systems (3-Month Contract)',
   'TV-AI-AUT-2026-001': 'Associate AI & Automation Engineer',
   'TV-AI-FS-2026-002': 'AI & Automation Engineer Intern (WhatsApp, AI Agents & Voice Automation)',
   'TV-WEB-MERN-2025-005': 'MERN Stack Developer Intern',
@@ -40,6 +41,8 @@ export const MERN_INTERN_JOB_IDS = [
 export const MERN_FULLTIME_JOB_IDS = ['TV-WEB-MERN-2026-007'];
 export const MERN_JOB_IDS = [...MERN_INTERN_JOB_IDS, ...MERN_FULLTIME_JOB_IDS];
 
+export const GENAI_JOB_IDS = ['TV-AI-GEN-2026-009'];
+
 export const ENGINEERING_FULLTIME_JOB_IDS = [
   'TV-AI-AUT-2026-001',
   'TV-WEB-MERN-2026-007'
@@ -57,6 +60,8 @@ export const isMarketingApplicationJob = (jobId) =>
   CONTENT_SOCIAL_MEDIA_JOB_IDS.includes(jobId) ||
   GROWTH_MARKETING_JOB_IDS.includes(jobId);
 
+export const isGenAiJob = (jobId) => GENAI_JOB_IDS.includes(jobId);
+
 export const isEngineeringFullTimeJob = (jobId) =>
   ENGINEERING_FULLTIME_JOB_IDS.includes(jobId);
 
@@ -68,6 +73,7 @@ export const isMernJob = (jobId) => MERN_JOB_IDS.includes(jobId);
 export const isMernFullTimeJob = (jobId) => MERN_FULLTIME_JOB_IDS.includes(jobId);
 
 export const requiresYearOfPassingOut = (jobId) => {
+  if (isGenAiJob(jobId)) return false;
   if (isMernFullTimeJob(jobId)) return true;
   if (isEngineeringFullTimeJob(jobId)) return false;
   return true;

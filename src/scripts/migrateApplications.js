@@ -2,13 +2,14 @@ import mongoose from 'mongoose';
 import { getApplicationModel, COLLECTION_MAPPING } from '../models/ApplicationFactory.js';
 import Application from '../models/Application.js';
 import dotenv from 'dotenv';
+import { connectMongo } from '../config/mongodb.js';
 
 dotenv.config();
 
 const migrateApplications = async () => {
   try {
     // Connect to MongoDB
-    await mongoose.connect(process.env.MONGODB_URI);
+    await connectMongo();
     console.log('Connected to MongoDB');
 
     // Get all existing applications

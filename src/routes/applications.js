@@ -11,7 +11,9 @@ import {
   GROWTH_MARKETING_JOB_IDS,
   MERN_INTERN_JOB_IDS,
   MERN_FULLTIME_JOB_IDS,
+  GENAI_JOB_IDS,
   isMarketingApplicationJob,
+  isGenAiJob,
   isEngineeringFullTimeJob,
   isEngineeringInternJob,
   isMernFullTimeJob,
@@ -244,8 +246,17 @@ const validateApplication = [
   body('phone').notEmpty().withMessage('Phone number is required'),
   body('location').notEmpty().withMessage('Location is required'),
   body('linkedinProfile').notEmpty().withMessage('LinkedIn Profile URL is required').isURL().withMessage('Please enter a valid LinkedIn URL'),
-  body('motivation').notEmpty().withMessage('Motivation to join is required'),
-  body('expectedStipend').notEmpty().withMessage('Expected stipend amount is required')
+  // Contract roles capture a monthly rate and an optional cover note instead of motivation/stipend.
+  body('motivation').custom((value, { req }) => {
+    if (isGenAiJob(normalizeJobId(req.body.jobId))) return true;
+    if (!value || String(value).trim() === '') throw new Error('Motivation to join is required');
+    return true;
+  }),
+  body('expectedStipend').custom((value, { req }) => {
+    if (isGenAiJob(normalizeJobId(req.body.jobId))) return true;
+    if (!value || String(value).trim() === '') throw new Error('Expected stipend amount is required');
+    return true;
+  })
 ];
 
 // Conditional validation middleware
@@ -340,6 +351,36 @@ const validateApplicationConditional = (req, res, next) => {
     const urlError = validateUrlFields(res, req.body, [
       'resumeLink', 'portfolioUrl', 'portfolioWorkSamples'
     ]);
+    if (urlError) return urlError;
+    return next();
+  }
+
+  if (GENAI_JOB_IDS.includes(jobId)) {
+    const missingFields = [
+      ...missingStringFields(req.body, [
+        'portfolioUrl', 'resumeLink', 'totalAiExperience', 'agenticExperience', 'currentTitle',
+        'highestDegree', 'availabilityToStart', 'cloudPlatform', 'devopsProficiency',
+        'systemExperience', 'timezone', 'contractCommitment', 'expectedMonthlyRate'
+      ]),
+      ...missingArrayFields(req.body, ['agentFrameworks', 'llmPlatforms'])
+    ];
+
+    if (missingFields.length > 0) {
+      return validationFailed(res, missingFields);
+    }
+
+    if (!/^\d+$/.test(String(req.body.expectedMonthlyRate).trim())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: [{
+          field: 'expectedMonthlyRate',
+          message: 'Expected rate per month must be a number in rupees (digits only)'
+        }]
+      });
+    }
+
+    const urlError = validateUrlFields(res, req.body, ['portfolioUrl', 'resumeLink']);
     if (urlError) return urlError;
     return next();
   }
@@ -544,8 +585,12 @@ router.get('/resume', async (req, res) => {
     return res.status(404).json({ success: false, error: 'Resume not found.' });
   }
   const filename = path.basename(key);
+  const disposition = String(req.query.disposition || '').toLowerCase() === 'inline'
+    ? 'inline'
+    : 'attachment';
   res.set('Content-Type', result.contentType);
-  res.set('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '\\"')}"`);
+  res.set('Content-Disposition', `${disposition}; filename="${filename.replace(/"/g, '\\"')}"`);
+  res.set('X-Content-Type-Options', 'nosniff');
   if (result.contentLength != null && result.contentLength > 0) {
     res.set('Content-Length', String(result.contentLength));
   }
