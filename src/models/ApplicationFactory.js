@@ -487,7 +487,8 @@ const COLLECTION_MAPPING = {
   'TV-MKT-CSM-2026-004': 'content_social_media_applications',
   'TV-MKT-CSMI-2026-006': 'content_social_media_applications',
   'TV-MKT-GME-2026-003': 'growth_marketing_applications',
-  'TV-MKT-GMI-2026-005': 'growth_marketing_applications'
+  'TV-MKT-GMI-2026-005': 'growth_marketing_applications',
+  'TV-SLS-BDE-2026-009': 'business_development_applications'
 };
 
 // Schema mapping
@@ -507,7 +508,8 @@ const SCHEMA_MAPPING = {
   'TV-MKT-CSM-2026-004': contentSocialMediaApplicationSchema,
   'TV-MKT-CSMI-2026-006': contentSocialMediaApplicationSchema,
   'TV-MKT-GME-2026-003': growthMarketingApplicationSchema,
-  'TV-MKT-GMI-2026-005': growthMarketingApplicationSchema
+  'TV-MKT-GMI-2026-005': growthMarketingApplicationSchema,
+  'TV-SLS-BDE-2026-009': growthMarketingApplicationSchema
 };
 
 // Factory function to get the appropriate model
@@ -564,4 +566,3 @@ export default {
   COLLECTION_MAPPING,
   SCHEMA_MAPPING
 };
-
