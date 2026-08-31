@@ -592,9 +592,11 @@ const COLLECTION_MAPPING = {
   'TV-MKT-SMM-2026-003': 'social_media_applications',
   'TV-MKT-CSM-2026-004': 'content_social_media_applications',
   'TV-MKT-CSMI-2026-006': 'content_social_media_applications',
+  'TV-MKT-SDMH-2026-011': 'healthcare_social_media_applications',
   'TV-MKT-GME-2026-003': 'growth_marketing_applications',
   'TV-MKT-GMI-2026-005': 'growth_marketing_applications',
-  'TV-SLS-BDE-2026-009': 'business_development_applications'
+  'TV-SLS-BDE-2026-009': 'business_development_applications',
+  'TV-SLS-HOT-2026-010': 'healthcare_outreach_applications'
 };
 
 // Schema mapping
@@ -614,9 +616,11 @@ const SCHEMA_MAPPING = {
   'TV-MKT-SMM-2026-003': socialMediaApplicationSchema,
   'TV-MKT-CSM-2026-004': contentSocialMediaApplicationSchema,
   'TV-MKT-CSMI-2026-006': contentSocialMediaApplicationSchema,
+  'TV-MKT-SDMH-2026-011': contentSocialMediaApplicationSchema,
   'TV-MKT-GME-2026-003': growthMarketingApplicationSchema,
   'TV-MKT-GMI-2026-005': growthMarketingApplicationSchema,
-  'TV-SLS-BDE-2026-009': growthMarketingApplicationSchema
+  'TV-SLS-BDE-2026-009': growthMarketingApplicationSchema,
+  'TV-SLS-HOT-2026-010': growthMarketingApplicationSchema
 };
 
 // Factory function to get the appropriate model

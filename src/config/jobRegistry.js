@@ -21,14 +21,16 @@ export const JOB_TITLES = {
   'TV-MKT-CSM-2026-004': 'Content & Social Media Executive',
   'TV-MKT-GMI-2026-005': 'Growth Marketing Intern',
   'TV-MKT-CSMI-2026-006': 'Content & Social Media Intern',
-  'TV-SLS-BDE-2026-009': 'Business Development Executive – IT Services'
+  'TV-SLS-BDE-2026-009': 'Business Development Executive – IT Services',
+  'TV-SLS-HOT-2026-010': 'Telecalling & Outreach Intern',
+  'TV-MKT-SDMH-2026-011': 'Social Media & Digital Marketing Intern – Healthcare'
 };
 
 export const ALL_SUPPORTED_JOB_IDS = Object.freeze(Object.keys(JOB_TITLES));
 
 export const LEGACY_SMM_JOB_IDS = ['TV-MKT-SMM-2025-003', 'TV-MKT-SMM-2026-003'];
-export const CONTENT_SOCIAL_MEDIA_JOB_IDS = ['TV-MKT-CSM-2026-004', 'TV-MKT-CSMI-2026-006'];
-export const GROWTH_MARKETING_JOB_IDS = ['TV-MKT-GME-2026-003', 'TV-MKT-GMI-2026-005', 'TV-SLS-BDE-2026-009'];
+export const CONTENT_SOCIAL_MEDIA_JOB_IDS = ['TV-MKT-CSM-2026-004', 'TV-MKT-CSMI-2026-006', 'TV-MKT-SDMH-2026-011'];
+export const GROWTH_MARKETING_JOB_IDS = ['TV-MKT-GME-2026-003', 'TV-MKT-GMI-2026-005', 'TV-SLS-BDE-2026-009', 'TV-SLS-HOT-2026-010'];
 
 export const MERN_INTERN_JOB_IDS = [
   'TV-WEB-MERN-2025-005',

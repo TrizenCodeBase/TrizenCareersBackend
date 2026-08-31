@@ -290,7 +290,7 @@ const validateApplicationConditional = (req, res, next) => {
   }
 
   if (CONTENT_SOCIAL_MEDIA_JOB_IDS.includes(jobId)) {
-    const isIntern = jobId === 'TV-MKT-CSMI-2026-006';
+    const isIntern = jobId === 'TV-MKT-CSMI-2026-006' || jobId === 'TV-MKT-SDMH-2026-011';
     const missingFields = [
       ...missingStringFields(req.body, [
         'socialMediaPageUrl', 'portfolioWorkSamples', 'resumeLink', 'contentCreated',
