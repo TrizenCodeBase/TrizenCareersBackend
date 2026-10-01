@@ -324,7 +324,7 @@ const validateApplicationConditional = (req, res, next) => {
   }
 
   if (GROWTH_MARKETING_JOB_IDS.includes(jobId)) {
-    const isIntern = jobId === 'TV-MKT-GMI-2026-005';
+    const isIntern = jobId === 'TV-MKT-GMI-2026-005' || jobId === 'TV-SLS-HOT-2026-010';
     const requiredFields = isIntern
       ? [
           'marketingToolsUsed', 'projectsOrActivities', 'growthMarketingInterest',
