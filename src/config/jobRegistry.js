@@ -57,6 +57,25 @@ export const ENGINEERING_INTERN_JOB_IDS = [
   ...MERN_INTERN_JOB_IDS
 ];
 
+/** Intern roles that ask whether the applicant took part in the AI HACK X MRDU hackathon. */
+export const HACKATHON_INTERN_JOB_IDS = [
+  'TV-SLS-HOT-2026-010',
+  'TV-AI-FS-2026-002',
+  'TV-MKT-GMI-2026-005',
+  'TV-MKT-SDMH-2026-011',
+  'TV-WEB-MERN-2026-008'
+];
+
+export const HACKATHON_FIELDS = [
+  'fromHackathon',
+  'hackathonTeamName',
+  'hackathonResult',
+  'hackathonProblemStatementId',
+  'hackathonProblemStatementTitle'
+];
+
+export const isHackathonEligibleJob = (jobId) => HACKATHON_INTERN_JOB_IDS.includes(jobId);
+
 export const isMarketingApplicationJob = (jobId) =>
   LEGACY_SMM_JOB_IDS.includes(jobId) ||
   CONTENT_SOCIAL_MEDIA_JOB_IDS.includes(jobId) ||

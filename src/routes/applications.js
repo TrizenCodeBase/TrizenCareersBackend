@@ -17,6 +17,8 @@ import {
   isEngineeringFullTimeJob,
   isEngineeringInternJob,
   isMernFullTimeJob,
+  isHackathonEligibleJob,
+  HACKATHON_FIELDS,
   requiresYearOfPassingOut,
   getJobTitle
 } from '../config/jobRegistry.js';
@@ -177,7 +179,47 @@ function sanitizeApplicationPayload(jobId, body) {
     stripIfEmpty('duration');
   }
 
+  if (!isHackathonEligibleJob(jobId)) {
+    HACKATHON_FIELDS.forEach((field) => delete payload[field]);
+  } else {
+    if (payload.fromHackathon !== 'yes') {
+      HACKATHON_FIELDS.filter((field) => field !== 'fromHackathon').forEach((field) => delete payload[field]);
+    }
+    HACKATHON_FIELDS.forEach(stripIfEmpty);
+    if (typeof payload.hackathonProblemStatementId !== 'string' || payload.hackathonProblemStatementId.length > 50) {
+      delete payload.hackathonProblemStatementId;
+    }
+  }
+
   return payload;
+}
+
+function hackathonValidationErrors(body) {
+  const errors = [];
+  if (!['yes', 'no'].includes(body.fromHackathon)) {
+    errors.push({ field: 'fromHackathon', message: 'Please tell us whether you took part in the hackathon' });
+    return errors;
+  }
+  if (body.fromHackathon !== 'yes') return errors;
+
+  const teamName = typeof body.hackathonTeamName === 'string' ? body.hackathonTeamName.trim() : '';
+  if (!teamName) {
+    errors.push({ field: 'hackathonTeamName', message: 'Please enter your hackathon team name' });
+  } else if (teamName.length > 100) {
+    errors.push({ field: 'hackathonTeamName', message: 'Team name cannot exceed 100 characters' });
+  }
+  if (!['winner', 'participant'].includes(body.hackathonResult)) {
+    errors.push({ field: 'hackathonResult', message: 'Please select whether you were a winner or a participant' });
+  }
+  const title = typeof body.hackathonProblemStatementTitle === 'string'
+    ? body.hackathonProblemStatementTitle.trim()
+    : '';
+  if (!title) {
+    errors.push({ field: 'hackathonProblemStatementTitle', message: 'Please tell us which problem statement you worked on' });
+  } else if (title.length > 300) {
+    errors.push({ field: 'hackathonProblemStatementTitle', message: 'Problem statement cannot exceed 300 characters' });
+  }
+  return errors;
 }
 
 const missingStringFields = (body, fields) =>
@@ -263,6 +305,17 @@ const validateApplication = [
 const validateApplicationConditional = (req, res, next) => {
   req.body.jobId = normalizeJobId(req.body.jobId);
   const { jobId } = req.body;
+
+  if (isHackathonEligibleJob(jobId)) {
+    const hackathonErrors = hackathonValidationErrors(req.body);
+    if (hackathonErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: hackathonErrors
+      });
+    }
+  }
 
   if (LEGACY_SMM_JOB_IDS.includes(jobId)) {
     const missingFields = [

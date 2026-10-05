@@ -154,6 +154,32 @@ const baseApplicationSchema = new mongoose.Schema({
       }
     }
   ],
+  // AI HACK X MRDU hackathon participation (intern roles only)
+  fromHackathon: {
+    type: String,
+    enum: ['yes', 'no'],
+    trim: true
+  },
+  hackathonTeamName: {
+    type: String,
+    trim: true,
+    maxlength: 100
+  },
+  hackathonResult: {
+    type: String,
+    enum: ['winner', 'participant'],
+    trim: true
+  },
+  hackathonProblemStatementId: {
+    type: String,
+    trim: true,
+    maxlength: 50
+  },
+  hackathonProblemStatementTitle: {
+    type: String,
+    trim: true,
+    maxlength: 300
+  },
   // Email tracking fields
   emailSent: {
     type: Boolean,
