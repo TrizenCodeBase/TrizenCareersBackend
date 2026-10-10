@@ -1,5 +1,12 @@
 import mongoose from 'mongoose';
 import { ALL_SUPPORTED_JOB_IDS, assertRegistryMatchesMappings } from '../config/jobRegistry.js';
+import Application from './Application.js';
+
+const dynamicSupportedJobIds = new Set();
+
+export const registerSupportedJobId = (jobId) => {
+  if (jobId) dynamicSupportedJobIds.add(jobId);
+};
 
 const modelCache = new Map();
 
@@ -655,7 +662,8 @@ export const getApplicationModel = (jobId) => {
   const schema = SCHEMA_MAPPING[jobId];
 
   if (!collectionName || !schema) {
-    throw new Error(`No collection mapping found for jobId: ${jobId}`);
+    // Fallback to standard Application model
+    return Application;
   }
 
   if (modelCache.has(collectionName)) {
@@ -684,17 +692,26 @@ export const getAllApplicationModels = () => {
     }
   }
 
+  // Also include the primary 'applications' collection for dynamically created jobs
+  if (!collections.has('applications')) {
+    collections.set('applications', {
+      collectionName: 'applications',
+      defaultJobId: 'GENERAL',
+      model: Application
+    });
+  }
+
   return Array.from(collections.values());
 };
 
 // Helper function to check if jobId is supported
 export const isSupportedJobId = (jobId) => {
-  return Object.prototype.hasOwnProperty.call(COLLECTION_MAPPING, jobId);
+  return Object.prototype.hasOwnProperty.call(COLLECTION_MAPPING, jobId) || dynamicSupportedJobIds.has(jobId);
 };
 
 assertRegistryMatchesMappings(COLLECTION_MAPPING);
 
-export { COLLECTION_MAPPING, SCHEMA_MAPPING };
+export { COLLECTION_MAPPING, SCHEMA_MAPPING, dynamicSupportedJobIds };
 
 export default {
   getApplicationModel,

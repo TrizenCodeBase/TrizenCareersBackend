@@ -11,7 +11,9 @@ import mongoose from 'mongoose';
 import { configureMongoDns, mongoClientOptions } from './config/mongodb.js';
 import userRoutes from './routes/users.js';
 import applicationRoutes from './routes/applications.js';
+import jobRoutes from './routes/jobs.js';
 import supportRoutes from './routes/support.js';
+import { seedJobsIfEmpty } from './scripts/seedJobs.js';
 import { logger } from './utils/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -36,6 +38,7 @@ const connectDB = async (attempt = 1) => {
   try {
     await mongoose.connect(process.env.MONGODB_URI, mongoClientOptions);
     logger.info('Connected to MongoDB');
+    await seedJobsIfEmpty();
   } catch (error) {
     logger.error(`MongoDB connection error (attempt ${attempt}/${maxAttempts}):`, error.message || error);
     if (attempt < maxAttempts) {
@@ -164,6 +167,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
 // API Routes
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/applications', applicationRoutes);
+app.use('/api/v1/jobs', jobRoutes);
 app.use('/api/v1/support', supportRoutes);
 
 // Health check endpoint (process liveness). mongodb field is the real readiness signal.

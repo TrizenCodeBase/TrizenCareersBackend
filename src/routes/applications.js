@@ -3,7 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
 import { body, validationResult } from 'express-validator';
-import { getApplicationModel, isSupportedJobId, getAllApplicationModels } from '../models/ApplicationFactory.js';
+import { getApplicationModel, isSupportedJobId, getAllApplicationModels, registerSupportedJobId } from '../models/ApplicationFactory.js';
+import Job from '../models/Job.js';
 import {
   ALL_SUPPORTED_JOB_IDS,
   LEGACY_SMM_JOB_IDS,
@@ -306,6 +307,24 @@ const validateApplicationConditional = (req, res, next) => {
   req.body.jobId = normalizeJobId(req.body.jobId);
   const { jobId } = req.body;
 
+  if (!ALL_SUPPORTED_JOB_IDS.includes(jobId)) {
+    // Dynamically added job - validate base required fields
+    const missing = ['resumeLink', 'expectedStipend'].filter(
+      field => !req.body[field] || (typeof req.body[field] === 'string' && req.body[field].trim() === '')
+    );
+    if (missing.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: missing.map(field => ({ field, message: `${field} is required` }))
+      });
+    }
+    const urlFields = ['resumeLink', 'portfolioUrl'].filter(f => req.body[f]);
+    const urlError = validateUrlFields(res, req.body, urlFields);
+    if (urlError) return urlError;
+    return next();
+  }
+
   if (isHackathonEligibleJob(jobId)) {
     const hackathonErrors = hackathonValidationErrors(req.body);
     if (hackathonErrors.length > 0) {
@@ -501,15 +520,34 @@ const validateApplicationConditional = (req, res, next) => {
 };
 
 // GET /api/v1/applications/supported-jobs - List job IDs accepted by the API
-router.get('/supported-jobs', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Supported application job IDs',
-    data: ALL_SUPPORTED_JOB_IDS.map((id) => ({
-      id,
-      title: getJobTitle(id)
-    }))
-  });
+router.get('/supported-jobs', async (req, res) => {
+  try {
+    const jobMap = new Map();
+    ALL_SUPPORTED_JOB_IDS.forEach((id) => {
+      jobMap.set(id, { id, title: getJobTitle(id) });
+    });
+
+    const dbJobs = await Job.find({ isArchived: { $ne: true } }).select('id title').lean().exec();
+    dbJobs.forEach((job) => {
+      jobMap.set(job.id, { id: job.id, title: job.title });
+      registerSupportedJobId(job.id);
+    });
+
+    res.json({
+      success: true,
+      message: 'Supported application job IDs',
+      data: Array.from(jobMap.values())
+    });
+  } catch (error) {
+    res.json({
+      success: true,
+      message: 'Supported application job IDs',
+      data: ALL_SUPPORTED_JOB_IDS.map((id) => ({
+        id,
+        title: getJobTitle(id)
+      }))
+    });
+  }
 });
 
 // POST /api/v1/applications/upload-resume - Upload resume file

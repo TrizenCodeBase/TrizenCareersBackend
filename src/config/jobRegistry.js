@@ -100,7 +100,15 @@ export const requiresYearOfPassingOut = (jobId) => {
   return true;
 };
 
-export const getJobTitle = (jobId) => JOB_TITLES[jobId] || jobId;
+export const dynamicJobTitles = new Map();
+
+export const registerDynamicJob = (jobId, title) => {
+  if (jobId && title) {
+    dynamicJobTitles.set(jobId, title);
+  }
+};
+
+export const getJobTitle = (jobId) => JOB_TITLES[jobId] || dynamicJobTitles.get(jobId) || jobId;
 
 export function assertRegistryMatchesMappings(collectionMapping) {
   const missing = ALL_SUPPORTED_JOB_IDS.filter((id) => !collectionMapping[id]);
@@ -110,3 +118,4 @@ export function assertRegistryMatchesMappings(collectionMapping) {
     );
   }
 }
+
