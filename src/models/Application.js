@@ -134,6 +134,10 @@ const applicationSchema = new mongoose.Schema({
     ],
     default: 'pending'
   },
+  deletedAt: {
+    type: Date,
+    default: null
+  },
   source: {
     type: String,
     default: '',
@@ -181,6 +185,9 @@ const applicationSchema = new mongoose.Schema({
 applicationSchema.index({ jobId: 1, appliedBy: 1 });
 applicationSchema.index({ status: 1 });
 applicationSchema.index({ createdAt: -1 });
+applicationSchema.index({ deletedAt: 1, createdAt: -1 });
+applicationSchema.index({ deletedAt: 1, status: 1, createdAt: -1 });
+applicationSchema.index({ email: 1, deletedAt: 1 });
 
 const Application = mongoose.model('Application', applicationSchema);
 export default Application;

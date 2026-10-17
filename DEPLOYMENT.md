@@ -79,6 +79,9 @@ The app includes a health check at `/api/health` that CapRover uses to monitor t
 - **Health Check**: `GET /api/health`
 - **Root**: `GET /` - Returns server status
 - **Applications**: `GET /api/v1/applications`
+- **Application Bin**: `GET /api/v1/applications/bin` (admin only)
+- **Move application to Bin**: `PUT /api/v1/applications/:id/trash` (admin only; soft-delete)
+- **Restore application**: `PUT /api/v1/applications/:id/restore` (admin only)
 - **Submit Application**: `POST /api/v1/applications`
 - **User Registration**: `POST /api/v1/users/register`
 - **User Login**: `POST /api/v1/users/login`

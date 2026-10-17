@@ -226,8 +226,11 @@ app.get('/api/docs', (req, res) => {
         'POST /api/v1/applications': 'Submit job application (protected)',
         'POST /api/v1/applications/upload-resume': 'Upload resume file (protected, multipart/form-data)',
         'GET /api/v1/applications': 'Get all applications (admin only)',
+        'GET /api/v1/applications/bin': 'List soft-deleted applications (admin only)',
         'GET /api/v1/applications/my': 'Get user\'s applications (protected)',
         'GET /api/v1/applications/:id': 'Get specific application (protected)',
+        'PUT /api/v1/applications/:id/trash': 'Move an application to the bin (admin only)',
+        'PUT /api/v1/applications/:id/restore': 'Restore an application from the bin (admin only)',
         'PUT /api/v1/applications/:id/status': 'Update application status (admin only)',
         'GET /api/v1/applications/stats/overview': 'Get application statistics (admin only)'
       }

@@ -70,6 +70,10 @@ const baseApplicationSchema = new mongoose.Schema({
     ],
     default: 'pending'
   },
+  deletedAt: {
+    type: Date,
+    default: null
+  },
   // Hiring pipeline tracker (admin)
   source: {
     type: String,
@@ -655,6 +659,12 @@ const SCHEMA_MAPPING = {
   'TV-SLS-BDE-2026-009': growthMarketingApplicationSchema,
   'TV-SLS-HOT-2026-010': growthMarketingApplicationSchema
 };
+
+for (const schema of new Set(Object.values(SCHEMA_MAPPING))) {
+  schema.index({ deletedAt: 1, createdAt: -1 });
+  schema.index({ deletedAt: 1, status: 1, createdAt: -1 });
+  schema.index({ email: 1, deletedAt: 1 });
+}
 
 // Factory function to get the appropriate model
 export const getApplicationModel = (jobId) => {

@@ -71,13 +71,18 @@ async function enrichApplicationsWithAppliedRoles(applications) {
   const allModels = getAllApplicationModels();
   const rolesByEmail = new Map();
 
-  for (const { defaultJobId, model } of allModels) {
-    const docs = await model
-      .find({ email: { $in: emails } })
-      .select('_id email jobId status createdAt')
-      .lean()
-      .exec();
+  const roleDocsByModel = await Promise.all(
+    allModels.map(({ defaultJobId, model }) =>
+      model
+        .find({ email: { $in: emails }, deletedAt: null })
+        .select('_id email jobId status createdAt')
+        .lean()
+        .exec()
+        .then((docs) => ({ defaultJobId, docs }))
+    )
+  );
 
+  for (const { defaultJobId, docs } of roleDocsByModel) {
     for (const doc of docs) {
       const email = String(doc.email || '').trim().toLowerCase();
       if (!email) continue;
@@ -579,7 +584,6 @@ router.post('/upload-resume', (req, res, next) => {
           MINIO_PUBLIC_ENDPOINT: process.env.MINIO_PUBLIC_ENDPOINT,
           MINIO_API_PORT: process.env.MINIO_API_PORT,
           MINIO_USE_SSL: process.env.MINIO_USE_SSL,
-          MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY,
           MINIO_BUCKET: process.env.MINIO_BUCKET,
         });
         const objectName = makeResumeObjectName(req.file.originalname);
@@ -621,7 +625,6 @@ router.post('/upload-resume', (req, res, next) => {
           MINIO_PUBLIC_ENDPOINT: process.env.MINIO_PUBLIC_ENDPOINT,
           MINIO_API_PORT: process.env.MINIO_API_PORT,
           MINIO_USE_SSL: process.env.MINIO_USE_SSL,
-          MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY,
           MINIO_BUCKET: process.env.MINIO_BUCKET,
         });
         return res.status(500).json({ success: false, error: 'MinIO upload failed: ' + minioErr.message });
@@ -759,7 +762,8 @@ router.post('/', validateApplication, validateApplicationConditional, async (req
     if (req.user?._id) {
       const existingApplication = await ApplicationModel.findOne({
         appliedBy: req.user._id,
-        jobId
+        jobId,
+        deletedAt: null
       });
 
       if (existingApplication) {
@@ -853,7 +857,8 @@ router.post('/lookup-emails', async (req, res) => {
 
     const { status, jobId } = req.body || {};
     const query = {
-      email: { $in: requested }
+      email: { $in: requested },
+      deletedAt: null
     };
 
     if (status) query.status = status;
@@ -896,7 +901,7 @@ router.post('/lookup-emails', async (req, res) => {
     const requestedSet = new Set(requested);
 
     // Emails present in DB for the same filters, but not in the pasted list
-    const scopeQuery = {};
+    const scopeQuery = { deletedAt: null };
     if (status) scopeQuery.status = status;
 
     const scopedEmails = new Set();
@@ -925,7 +930,10 @@ router.post('/lookup-emails', async (req, res) => {
       .filter((email) => !requestedSet.has(email))
       .sort();
 
-    const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(applications, req));
+    const linkedApplications = rewriteResumeLinks(applications, req);
+    const enriched = jobId
+      ? linkedApplications
+      : await enrichApplicationsWithAppliedRoles(linkedApplications);
 
     res.json({
       success: true,
@@ -966,7 +974,7 @@ router.get('/', async (req, res) => {
     const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '10'), 10) || 10));
 
-    const query = {};
+    const query = { deletedAt: null };
 
     // Filter by status
     if (status) {
@@ -1008,7 +1016,7 @@ router.get('/', async (req, res) => {
       const ApplicationModel = getApplicationModel(jobId);
       const jobQuery = { ...query, jobId };
       const applications = await ApplicationModel.find(jobQuery)
-        .populate('appliedBy', 'username email firstName lastName role')
+        .select('_id fullName email phone jobId resumeLink status createdAt')
         .sort(sortOptions)
         .limit(limit)
         .skip((page - 1) * limit)
@@ -1016,11 +1024,11 @@ router.get('/', async (req, res) => {
         .exec();
 
       const total = await ApplicationModel.countDocuments(jobQuery);
-      const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(applications, req));
+      const linked = rewriteResumeLinks(applications, req);
 
       return res.json({
         success: true,
-        data: enriched,
+        data: linked,
         pagination: {
           currentPage: page,
           totalPages: Math.max(1, Math.ceil(total / limit)),
@@ -1030,28 +1038,33 @@ router.get('/', async (req, res) => {
         }
       });
     } else {
-      // Get from all collections, then sort + paginate in memory
+      // Fetch only enough rows from each collection to satisfy this global page.
       const allModels = getAllApplicationModels();
       
-      let allApplications = [];
-      let totalApplications = 0;
+      const endIndex = page * limit;
+      const collectionResults = await Promise.all(
+        allModels.map(async ({ defaultJobId, model }) => {
+          const [applications, total] = await Promise.all([
+            model.find(query)
+              .select('_id fullName email phone jobId resumeLink status createdAt')
+              .sort(sortOptions)
+              .limit(endIndex)
+              .lean()
+              .exec(),
+            model.countDocuments(query)
+          ]);
 
-      for (const { defaultJobId, model } of allModels) {
-        const applications = await model.find(query)
-          .populate('appliedBy', 'username email firstName lastName role')
-          .sort(sortOptions)
-          .lean()
-          .exec();
-
-        // Ensure legacy documents without jobId still have a sensible jobId
-        const applicationsWithJobId = applications.map(app => ({
-          ...app,
-          jobId: app.jobId || defaultJobId
-        }));
-
-        allApplications = allApplications.concat(applicationsWithJobId);
-        totalApplications += await model.countDocuments(query);
-      }
+          return {
+            applications: applications.map((app) => ({
+              ...app,
+              jobId: app.jobId || defaultJobId
+            })),
+            total
+          };
+        })
+      );
+      const allApplications = collectionResults.flatMap((result) => result.applications);
+      const totalApplications = collectionResults.reduce((total, result) => total + result.total, 0);
 
       // Sort all applications (handle dates correctly)
       allApplications.sort((a, b) => {
@@ -1074,9 +1087,9 @@ router.get('/', async (req, res) => {
 
       // Apply pagination with numeric indexes (page/limit must be numbers — string concat broke this)
       const startIndex = (page - 1) * limit;
-      const endIndex = startIndex + limit;
       const paginatedApplications = allApplications.slice(startIndex, endIndex);
-      const enriched = await enrichApplicationsWithAppliedRoles(rewriteResumeLinks(paginatedApplications, req));
+      const linked = rewriteResumeLinks(paginatedApplications, req);
+      const enriched = await enrichApplicationsWithAppliedRoles(linked);
 
       return res.json({
         success: true,
@@ -1108,7 +1121,7 @@ router.get('/my', protect, async (req, res) => {
       status
     } = req.query;
 
-    const query = { appliedBy: req.user._id };
+    const query = { appliedBy: req.user._id, deletedAt: null };
 
     if (status) {
       query.status = status;
@@ -1148,7 +1161,7 @@ const findApplicationById = async (applicationId, hintJobId = null) => {
   if (hintJobId && isSupportedJobId(hintJobId)) {
     try {
       const model = getApplicationModel(hintJobId);
-      const application = await model.findById(applicationId)
+      const application = await model.findOne({ _id: applicationId, deletedAt: null })
         .populate('appliedBy', 'username email firstName lastName role')
         .lean();
 
@@ -1167,7 +1180,7 @@ const findApplicationById = async (applicationId, hintJobId = null) => {
   const results = await Promise.all(
     allModels.map(async ({ defaultJobId, model }) => {
       try {
-        const application = await model.findById(applicationId)
+        const application = await model.findOne({ _id: applicationId, deletedAt: null })
           .populate('appliedBy', 'username email firstName lastName role')
           .lean();
 
@@ -1197,7 +1210,7 @@ const findApplicationsByEmail = async (email) => {
   const results = await Promise.all(
     allModels.map(async ({ defaultJobId, model }) => {
       try {
-        const docs = await model.find({ email: normalized })
+        const docs = await model.find({ email: normalized, deletedAt: null })
           .select('_id jobId status createdAt updatedAt fullName email adminRemarks adminRecordings')
           .sort({ createdAt: -1 })
           .lean()
@@ -1217,6 +1230,151 @@ const findApplicationsByEmail = async (email) => {
   applications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return applications;
 };
+
+const findApplicationIncludingDeletedById = async (applicationId, hintJobId = null) => {
+  if (hintJobId && isSupportedJobId(hintJobId)) {
+    try {
+      const model = getApplicationModel(hintJobId);
+      const application = await model.findById(applicationId).lean();
+      if (application) {
+        return { ...application, jobId: application.jobId || hintJobId };
+      }
+    } catch (_) {}
+  }
+
+  const allModels = getAllApplicationModels();
+  const results = await Promise.all(
+    allModels.map(async ({ defaultJobId, model }) => {
+      try {
+        const application = await model.findById(applicationId).lean();
+        return application
+          ? { ...application, jobId: application.jobId || defaultJobId }
+          : null;
+      } catch (_) {
+        return null;
+      }
+    })
+  );
+  return results.find(Boolean) || null;
+};
+
+// GET /api/v1/applications/bin - List soft-deleted applications for admins.
+router.get('/bin', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Admin privileges required.' });
+    }
+
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '20'), 10) || 20));
+    const filter = { deletedAt: { $ne: null } };
+
+    if (req.query.status) filter.status = String(req.query.status);
+    if (req.query.jobId) {
+      const jobId = String(req.query.jobId);
+      if (!isSupportedJobId(jobId)) {
+        return res.status(400).json({ success: false, error: `Unsupported job ID: ${jobId}` });
+      }
+      filter.jobId = jobId;
+    }
+    if (req.query.search) {
+      const escaped = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { fullName: { $regex: escaped, $options: 'i' } },
+        { email: { $regex: escaped, $options: 'i' } },
+        { location: { $regex: escaped, $options: 'i' } }
+      ];
+    }
+
+    const applications = [];
+    let totalApplications = 0;
+    for (const { defaultJobId, model } of getAllApplicationModels()) {
+      const docs = await model.find(filter)
+        .populate('appliedBy', 'username email firstName lastName role')
+        .lean()
+        .exec();
+      applications.push(...docs.map((app) => ({ ...app, jobId: app.jobId || defaultJobId })));
+      totalApplications += await model.countDocuments(filter);
+    }
+
+    applications.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+    const startIndex = (page - 1) * limit;
+    const data = rewriteResumeLinks(applications.slice(startIndex, startIndex + limit), req);
+
+    return res.json({
+      success: true,
+      data,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.max(1, Math.ceil(totalApplications / limit)),
+        totalApplications,
+        hasNextPage: page * limit < totalApplications,
+        hasPrevPage: page > 1
+      }
+    });
+  } catch (error) {
+    logger.error('Error fetching trashed applications:', error);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// Move an application to the bin without permanently deleting its data.
+router.put('/:id/trash', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Admin privileges required.' });
+    }
+
+    const hintJobId = req.body?.jobId ? normalizeJobId(String(req.body.jobId)) : null;
+    const application = await findApplicationById(req.params.id, hintJobId);
+    if (!application) {
+      return res.status(404).json({ success: false, error: 'Application not found.' });
+    }
+
+    const updated = await getApplicationModel(application.jobId).findOneAndUpdate(
+      { _id: req.params.id, deletedAt: null },
+      { deletedAt: new Date() },
+      { new: true }
+    );
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Application not found.' });
+    }
+    logger.info(`Application moved to bin: ${updated._id}`);
+    return res.json({ success: true, message: 'Application moved to bin.' });
+  } catch (error) {
+    logger.error('Error moving application to bin:', error);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// Restore a soft-deleted application from the bin.
+router.put('/:id/restore', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Admin privileges required.' });
+    }
+
+    const hintJobId = req.body?.jobId ? normalizeJobId(String(req.body.jobId)) : null;
+    const application = await findApplicationIncludingDeletedById(req.params.id, hintJobId);
+    if (!application || !application.deletedAt) {
+      return res.status(404).json({ success: false, error: 'Trashed application not found.' });
+    }
+
+    const restored = await getApplicationModel(application.jobId).findOneAndUpdate(
+      { _id: req.params.id, deletedAt: { $ne: null } },
+      { deletedAt: null },
+      { new: true }
+    );
+    if (!restored) {
+      return res.status(404).json({ success: false, error: 'Trashed application not found.' });
+    }
+    logger.info(`Application restored from bin: ${req.params.id}`);
+    return res.json({ success: true, message: 'Application restored.' });
+  } catch (error) {
+    logger.error('Error restoring application from bin:', error);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
 
 // GET /api/v1/applications/:id - Get specific application
 router.get('/:id', protect, async (req, res) => {
@@ -1500,7 +1658,7 @@ router.get('/candidates', protect, async (req, res) => {
       sortOrder = 'desc'
     } = req.query;
 
-    const query = {};
+    const query = { deletedAt: null };
 
     // Filter by status
     if (status) {
@@ -1593,39 +1751,60 @@ router.get('/candidates', protect, async (req, res) => {
 // GET /api/v1/applications/stats - Get application statistics (public)
 router.get('/stats/overview', protect, async (req, res) => {
   try {
-    // Get all application models
     const allModels = getAllApplicationModels();
-    
+    const statusCounts = emptyStatusBreakdown();
+    const recentCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const collectionStats = await Promise.all(
+      allModels.map(({ defaultJobId, model }) =>
+        model.aggregate([
+          { $match: { deletedAt: null } },
+          {
+            $facet: {
+              statusBreakdown: [
+                { $group: { _id: '$status', count: { $sum: 1 } } }
+              ],
+              totals: [
+                {
+                  $group: {
+                    _id: null,
+                    totalApplications: { $sum: 1 },
+                    recentApplications: {
+                      $sum: {
+                        $cond: [{ $gte: ['$createdAt', recentCutoff] }, 1, 0]
+                      }
+                    }
+                  }
+                }
+              ],
+              applicationsByJob: [
+                { $group: { _id: '$jobId', count: { $sum: 1 } } }
+              ]
+            }
+          }
+        ]).then((result) => ({ defaultJobId, result }))
+      )
+    );
+
     let totalApplications = 0;
     let recentApplications = 0;
-    const statusCounts = emptyStatusBreakdown();
-
-    // Aggregate stats across all job application collections
-    for (const { model } of allModels) {
-      const stats = await model.aggregate([
-        {
-          $group: {
-            _id: '$status',
-            count: { $sum: 1 }
-          }
-        }
-      ]);
-
-      const total = await model.countDocuments();
-      const recent = await model.countDocuments({
-        createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-      });
-
-      totalApplications += total;
-      recentApplications += recent;
-
-      stats.forEach(stat => {
+    const jobApplicationCounts = {};
+    for (const { defaultJobId, result: [result] } of collectionStats) {
+      if (!result) continue;
+      const totals = result.totals[0];
+      totalApplications += totals?.totalApplications || 0;
+      recentApplications += totals?.recentApplications || 0;
+      for (const stat of result.statusBreakdown) {
         if (statusCounts[stat._id] !== undefined) {
           statusCounts[stat._id] += stat.count;
         } else {
           statusCounts[stat._id] = stat.count;
         }
-      });
+      }
+      for (const jobStat of result.applicationsByJob) {
+        const jobId = jobStat._id || defaultJobId;
+        jobApplicationCounts[jobId] = (jobApplicationCounts[jobId] || 0) + jobStat.count;
+      }
     }
 
     res.json({
@@ -1633,7 +1812,8 @@ router.get('/stats/overview', protect, async (req, res) => {
       data: {
         totalApplications,
         recentApplications,
-        statusBreakdown: statusCounts
+        statusBreakdown: statusCounts,
+        jobApplicationCounts
       }
     });
   } catch (error) {
