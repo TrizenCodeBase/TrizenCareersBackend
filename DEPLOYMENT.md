@@ -21,7 +21,18 @@ FRONTEND_URL=https://careers.trizenventures.com
 API_VERSION=v1
 API_PREFIX=/api
 CAPROVER_GIT_COMMIT_SHA=latest
+MINIO_ENDPOINT=http://srv-captain--trizencareer-minio-api
+MINIO_PUBLIC_ENDPOINT=https://trizencareer-minio-api.llp.trizenventures.com
+MINIO_ACCESS_KEY=your_minio_access_key
+MINIO_SECRET_KEY=your_minio_secret_key
+MINIO_BUCKET=careers-resumes
 ```
+
+`MINIO_ENDPOINT` must be reachable from the backend and point to the MinIO **S3 API**, not its console. The CapRover HTTP Settings screenshot shows the internal service URL as `http://srv-captain--trizencareer-minio-api` (without an explicit port), and its public URL as `https://trizencareer-minio-api.llp.trizenventures.com`. Use the internal URL when the backend runs in the same CapRover network; use the public URL when the backend runs locally. Ensure the MinIO API app is running and its configured container HTTP port forwards to the S3 API.
+
+If the backend runs locally (for example, on Windows), the CapRover-only hostname `srv-captain--...` will not resolve. Set `MINIO_ENDPOINT` to the MinIO S3 API's externally reachable HTTPS URL instead; use that same URL as `MINIO_PUBLIC_ENDPOINT` if the frontend needs direct presigned links. Do not expose the MinIO console port as the S3 endpoint.
+
+The backend proxies resume files through `/api/v1/applications/resume`. A missing object returns `404`; an unreachable or misconfigured MinIO endpoint returns `502` so a network failure is not mistaken for a deleted resume.
 
 ### Build Arguments
 The Dockerfile now properly accepts all build arguments, eliminating the warning about unused build arguments. The following build arguments are supported:

@@ -380,6 +380,10 @@ export async function getResumeStream(bucket, key) {
     const stream = s3.getObject({ Bucket: bucket, Key: key }).createReadStream();
     return { stream, contentType, contentLength };
   } catch (err) {
+    if (err.code === 'NoSuchKey' || err.code === 'NotFound' || err.statusCode === 404) {
+      return null;
+    }
+
     if (err.code === 'UnknownEndpoint' || err.code === 'NetworkingError' || err.code === 'ENOTFOUND') {
       const fallbackS3 = getPresignClient();
       if (fallbackS3 && fallbackS3 !== s3) {
@@ -396,7 +400,14 @@ export async function getResumeStream(bucket, key) {
             code: fallbackErr.code || fallbackErr.statusCode,
             error: fallbackErr.message || String(fallbackErr),
           });
-          return null;
+          if (
+            fallbackErr.code === 'NoSuchKey' ||
+            fallbackErr.code === 'NotFound' ||
+            fallbackErr.statusCode === 404
+          ) {
+            return null;
+          }
+          throw fallbackErr;
         }
       }
     }
@@ -406,7 +417,7 @@ export async function getResumeStream(bucket, key) {
       code: err.code || err.statusCode,
       error: err.message || String(err),
     });
-    return null;
+    throw err;
   }
 }
 
