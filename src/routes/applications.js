@@ -662,39 +662,63 @@ router.get('/resume', async (req, res) => {
   if (!key || !key.startsWith('resumes/')) {
     return res.status(400).json({ success: false, error: 'Invalid or missing key.' });
   }
-  if (!isMinioConfigured()) {
-    return res.status(503).json({ success: false, error: 'Resume storage not configured.' });
-  }
-  let result;
-  try {
-    result = await getResumeStream(RESUME_BUCKET, key);
-  } catch (err) {
-    logger.error('Resume proxy error', { key, error: err.message });
-    return res.status(500).json({ success: false, error: 'Failed to load resume.' });
-  }
-  if (!result) {
-    return res.status(404).json({ success: false, error: 'Resume not found.' });
-  }
-  const filename = path.basename(key);
+
+  const localFileName = path.basename(key);
+  const localFilePath = path.join(uploadsDir, localFileName);
   const disposition = String(req.query.disposition || '').toLowerCase() === 'inline'
     ? 'inline'
     : 'attachment';
-  res.set('Content-Type', result.contentType);
-  res.set('Content-Disposition', `${disposition}; filename="${filename.replace(/"/g, '\\"')}"`);
-  res.set('X-Content-Type-Options', 'nosniff');
-  if (result.contentLength != null && result.contentLength > 0) {
-    res.set('Content-Length', String(result.contentLength));
+
+  // 1. Check local filesystem first (instant, 0ms, works if uploaded locally or without MinIO)
+  if (fs.existsSync(localFilePath)) {
+    const ext = path.extname(localFileName).toLowerCase();
+    const mimeTypes = {
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp'
+    };
+    const contentType = mimeTypes[ext] || 'application/octet-stream';
+    res.set('Content-Type', contentType);
+    res.set('Content-Disposition', `${disposition}; filename="${localFileName.replace(/"/g, '\\"')}"`);
+    res.set('X-Content-Type-Options', 'nosniff');
+    return fs.createReadStream(localFilePath).pipe(res);
   }
-  const stream = result.stream;
-  res.on('close', () => {
-    if (stream && !stream.destroyed) stream.destroy();
-  });
-  stream.on('error', (err) => {
-    logger.warn('Resume stream error', { key, error: err.message });
-    if (!res.headersSent) res.status(500).json({ success: false, error: 'Failed to stream resume.' });
-    else if (!res.writableEnded) res.end();
-  });
-  stream.pipe(res);
+
+  // 2. If MinIO is configured, attempt to stream from MinIO
+  if (isMinioConfigured()) {
+    let result = null;
+    try {
+      result = await getResumeStream(RESUME_BUCKET, key);
+    } catch (err) {
+      logger.error('Resume proxy error', { key, error: err.message });
+      return res.status(502).json({ success: false, error: 'MinIO storage service unavailable.' });
+    }
+    if (result && result.stream) {
+      const filename = path.basename(key);
+      res.set('Content-Type', result.contentType || 'application/pdf');
+      res.set('Content-Disposition', `${disposition}; filename="${filename.replace(/"/g, '\\"')}"`);
+      res.set('X-Content-Type-Options', 'nosniff');
+      if (result.contentLength != null && result.contentLength > 0) {
+        res.set('Content-Length', String(result.contentLength));
+      }
+      const stream = result.stream;
+      res.on('close', () => {
+        if (stream && !stream.destroyed) stream.destroy();
+      });
+      stream.on('error', (err) => {
+        logger.warn('Resume stream error', { key, error: err.message });
+        if (!res.headersSent) res.status(500).json({ success: false, error: 'Failed to stream resume.' });
+        else if (!res.writableEnded) res.end();
+      });
+      return stream.pipe(res);
+    }
+  }
+
+  return res.status(404).json({ success: false, error: 'Resume not found on storage or disk.' });
 });
 
 // POST /api/v1/applications - Submit a new application
@@ -1119,11 +1143,11 @@ router.get('/my', protect, async (req, res) => {
 });
 
 // Helper function to find application by ID across all collections
-const findApplicationById = async (applicationId) => {
-  const allModels = getAllApplicationModels();
-
-  for (const { defaultJobId, model } of allModels) {
+const findApplicationById = async (applicationId, hintJobId = null) => {
+  // If hintJobId provided and valid, try that collection first for instant response (~50ms)
+  if (hintJobId && isSupportedJobId(hintJobId)) {
     try {
+      const model = getApplicationModel(hintJobId);
       const application = await model.findById(applicationId)
         .populate('appliedBy', 'username email firstName lastName role')
         .lean();
@@ -1131,16 +1155,36 @@ const findApplicationById = async (applicationId) => {
       if (application) {
         return {
           ...application,
-          jobId: application.jobId || defaultJobId
+          jobId: application.jobId || hintJobId
         };
       }
-    } catch (error) {
-      // Continue searching in other collections if this one fails
-      continue;
-    }
+    } catch (_) {}
   }
 
-  return null;
+  const allModels = getAllApplicationModels();
+
+  // Search all collections concurrently in parallel
+  const results = await Promise.all(
+    allModels.map(async ({ defaultJobId, model }) => {
+      try {
+        const application = await model.findById(applicationId)
+          .populate('appliedBy', 'username email firstName lastName role')
+          .lean();
+
+        if (application) {
+          return {
+            ...application,
+            jobId: application.jobId || defaultJobId
+          };
+        }
+        return null;
+      } catch (error) {
+        return null;
+      }
+    })
+  );
+
+  return results.find(Boolean) || null;
 };
 
 const findApplicationsByEmail = async (email) => {
@@ -1148,23 +1192,28 @@ const findApplicationsByEmail = async (email) => {
   if (!normalized) return [];
 
   const allModels = getAllApplicationModels();
-  let applications = [];
 
-  for (const { defaultJobId, model } of allModels) {
-    const docs = await model.find({ email: normalized })
-      .select('_id jobId status createdAt updatedAt fullName email adminRemarks adminRecordings')
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+  // Query all collections concurrently in parallel
+  const results = await Promise.all(
+    allModels.map(async ({ defaultJobId, model }) => {
+      try {
+        const docs = await model.find({ email: normalized })
+          .select('_id jobId status createdAt updatedAt fullName email adminRemarks adminRecordings')
+          .sort({ createdAt: -1 })
+          .lean()
+          .exec();
 
-    applications = applications.concat(
-      docs.map((app) => ({
-        ...app,
-        jobId: app.jobId || defaultJobId
-      }))
-    );
-  }
+        return docs.map((app) => ({
+          ...app,
+          jobId: app.jobId || defaultJobId
+        }));
+      } catch (err) {
+        return [];
+      }
+    })
+  );
 
+  const applications = results.flat();
   applications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return applications;
 };
@@ -1172,7 +1221,8 @@ const findApplicationsByEmail = async (email) => {
 // GET /api/v1/applications/:id - Get specific application
 router.get('/:id', protect, async (req, res) => {
   try {
-    const application = await findApplicationById(req.params.id);
+    const hintJobId = req.query.jobId ? normalizeJobId(String(req.query.jobId)) : null;
+    const application = await findApplicationById(req.params.id, hintJobId);
 
     if (!application) {
       return res.status(404).json({
@@ -1228,7 +1278,8 @@ router.put('/:id/admin-notes', protect, async (req, res) => {
       });
     }
 
-    const application = await findApplicationById(req.params.id);
+    const hintJobId = (req.body?.jobId || req.query?.jobId) ? normalizeJobId(String(req.body?.jobId || req.query?.jobId)) : null;
+    const application = await findApplicationById(req.params.id, hintJobId);
     if (!application) {
       return res.status(404).json({
         success: false,
@@ -1361,8 +1412,8 @@ router.put('/:id/status', protect, async (req, res) => {
       });
     }
 
-    // Find the application first to determine which collection it's in
-    const application = await findApplicationById(req.params.id);
+    const hintJobId = (req.body?.jobId || req.query?.jobId) ? normalizeJobId(String(req.body?.jobId || req.query?.jobId)) : null;
+    const application = await findApplicationById(req.params.id, hintJobId);
 
     if (!application) {
       return res.status(404).json({

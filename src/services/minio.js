@@ -141,7 +141,7 @@ function getS3Client() {
     signatureVersion: 'v4',
     region,
     sslEnabled: protocol === 'https',
-    httpOptions: { timeout: 15000, connectTimeout: 8000 },
+    httpOptions: { timeout: 8000, connectTimeout: 3000 },
   });
 
   return s3Client;
